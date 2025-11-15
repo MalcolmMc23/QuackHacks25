@@ -2361,6 +2361,14 @@ const onNameSubmit = async (name: string) => {
 			</div>
 		</template>
 	</ResourcesListLayout>
+	<N8nButton
+		:class="$style.fixedButton"
+		type="primary"
+		size="large"
+		data-test-id="fixed-bottom-right-button"
+	>
+		Button
+	</N8nButton>
 </template>
 
 <style lang="scss" module>
@@ -2472,6 +2480,13 @@ const onNameSubmit = async (name: string) => {
 
 .pointer-disabled {
 	pointer-events: none;
+}
+
+.fixedButton {
+	position: fixed;
+	bottom: var(--spacing--lg);
+	right: var(--spacing--lg);
+	z-index: 1000;
 }
 </style>
 
