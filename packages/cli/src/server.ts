@@ -66,6 +66,7 @@ import '@/webhooks/webhooks.controller';
 import { ChatServer } from './chat/chat-server';
 import { MfaService } from './mfa/mfa.service';
 import { PubSubRegistry } from './scaling/pubsub/pubsub.registry';
+import { Orchestrator } from './orchestrator';
 
 @Service()
 export class Server extends AbstractServer {
@@ -74,6 +75,8 @@ export class Server extends AbstractServer {
 	private presetCredentialsLoaded: boolean;
 
 	private frontendService?: FrontendService;
+
+	private orchestrator: Orchestrator;
 
 	constructor(
 		private readonly loadNodesAndCredentials: LoadNodesAndCredentials,
@@ -85,6 +88,7 @@ export class Server extends AbstractServer {
 
 		this.testWebhooksEnabled = true;
 		this.webhooksEnabled = !this.globalConfig.endpoints.disableProductionWebhooksOnMainProcess;
+		this.orchestrator = new Orchestrator();
 	}
 
 	async start() {
@@ -107,6 +111,7 @@ export class Server extends AbstractServer {
 		}
 
 		this.eventService.emit('server-started');
+		this.orchestrator.orchestrateWorkflow('example-workflow-id');
 	}
 
 	private async registerAdditionalControllers() {
