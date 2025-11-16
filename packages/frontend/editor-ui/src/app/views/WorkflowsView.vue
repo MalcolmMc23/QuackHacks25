@@ -940,26 +940,11 @@ const testTaskmaster = async () => {
 
 		console.log('Testing webhook with payload:', testPayload);
 
-<<<<<<< Current (Your changes)
-<<<<<<< Current (Your changes)
-		const response = await makeRestApiRequest(
-			rootStore.restApiContext,
-			'POST',
-			'/webhook/gen-script',
-=======
-		// When testing workflows manually, n8n uses /webhook-test/ instead of /webhook/
-		const response = await makeRestApiRequest(
-			rootStore.restApiContext,
-			'POST',
-			'/webhook-test/gen-script',
->>>>>>> Incoming (Background Agent changes)
-=======
 		// Try production webhook endpoint since workflow is active
 		const response = await makeRestApiRequest(
 			rootStore.restApiContext,
 			'POST',
 			'/webhook/gen-script',
->>>>>>> Incoming (Background Agent changes)
 			testPayload,
 		);
 
@@ -967,7 +952,9 @@ const testTaskmaster = async () => {
 
 		toast.showMessage({
 			title: i18n.baseText('workflows.webhook.test.success.title') || 'Webhook Test Successful',
-			message: i18n.baseText('workflows.webhook.test.success.message') || 'Check console for full response',
+			message:
+				i18n.baseText('workflows.webhook.test.success.message') ||
+				'Check console for full response',
 			type: 'success',
 			duration: 5000,
 		});

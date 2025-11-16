@@ -445,6 +445,14 @@ export class OrchestrationController {
 			throw new BadRequestError('Tasks array is required and must not be empty');
 		}
 
+		// Console log the task list being executed
+		console.log('========================================');
+		console.log('ORCHESTRATOR EXECUTING TASK LIST:');
+		console.log('========================================');
+		console.log(JSON.stringify(tasks, null, 2));
+		console.log(`Total tasks to execute: ${tasks.length}`);
+		console.log('========================================\n');
+
 		const workflowFinderService = Container.get(WorkflowFinderService);
 		const workflowExecutionService = Container.get(WorkflowExecutionService);
 
