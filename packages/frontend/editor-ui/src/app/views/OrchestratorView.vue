@@ -167,7 +167,10 @@ const sendMessage = async () => {
 			async () => {
 				// Stream done - save chat
 				isSending.value = false;
-				await saveCurrentChat();
+				// Only save if we have valid messages (don't save empty chats)
+				if (messages.value.length > 0) {
+					await saveCurrentChat();
+				}
 			},
 			(error) => {
 				// Stream error
@@ -298,8 +301,8 @@ const handleRunTasks = async (
 		// Handle final result
 		if (finalResult) {
 			if (finalResult.success) {
-				// Add final success message
-				const successContent = finalResult.summary
+				// Always show a base success message so the user knows the task chain completed
+				const baseSuccessContent = finalResult.summary
 					? `✅ All tasks completed successfully!\n\n${finalResult.summary}`
 					: finalResult.output
 						? `✅ All tasks completed successfully!\n\nResult:\n\`\`\`json\n${JSON.stringify(finalResult.output, null, 2)}\n\`\`\``
@@ -308,7 +311,7 @@ const handleRunTasks = async (
 				messages.value.push({
 					id: (Date.now() + 1).toString(),
 					type: 'assistant',
-					content: successContent,
+					content: baseSuccessContent,
 					timestamp: new Date(),
 				});
 
@@ -317,6 +320,78 @@ const handleRunTasks = async (
 					message: `Successfully executed ${finalResult.executedTasks} task(s)`,
 					type: 'success',
 				});
+
+				// Extract and normalize tool results using the canonical ToolResult shape
+				try {
+					const rawToolResults = Array.isArray(finalResult.toolResults)
+						? finalResult.toolResults
+						: finalResult.output
+							? Array.isArray(finalResult.output)
+								? finalResult.output
+								: [finalResult.output]
+							: [];
+
+					const toolResults: ToolResult[] = rawToolResults
+						.flatMap((item: unknown) => {
+							if (!item) return [];
+							return Array.isArray(item) ? item : [item];
+						})
+						.map((item: any) => {
+							const source =
+								typeof item?.source === 'string' && item.source.trim().length > 0
+									? item.source
+									: 'workflow';
+							const reply =
+								typeof item?.reply === 'string' && item.reply.trim().length > 0
+									? item.reply
+									: 'Tool returned data.';
+							const data =
+								item && typeof item === 'object' && 'data' in item
+									? (item as { data?: unknown }).data
+									: item;
+
+							return {
+								source,
+								reply,
+								data,
+							} as ToolResult;
+						})
+						.filter((tr) => !!tr && typeof tr.source === 'string' && !!tr.reply);
+
+					const normalizedUserPrompt = userPrompt?.trim() ?? '';
+
+					// Only call the orchestrator LLM if we have meaningful tool results and a user question
+					if (toolResults.length > 0 && normalizedUserPrompt) {
+						const llmMessages = buildMessages(normalizedUserPrompt, toolResults);
+
+						const summaryResponse = await makeRestApiRequest<{ answer: string }>(
+							rootStore.restApiContext,
+							'POST',
+							'/orchestration/chats',
+							{
+								messages: llmMessages,
+								taskResults: toolResults,
+							},
+						);
+
+						if (summaryResponse?.answer) {
+							messages.value.push({
+								id: (Date.now() + 2).toString(),
+								type: 'assistant',
+								content: summaryResponse.answer,
+								timestamp: new Date(),
+							});
+						}
+					}
+				} catch (summaryError) {
+					console.error('Failed to summarize tool results via orchestrator LLM:', summaryError);
+					// Non-fatal: tasks succeeded; we already showed a base success message
+					toast.showError(
+						summaryError,
+						'Orchestrator summary error',
+						'Tasks ran successfully, but summarizing tool results failed.',
+					);
+				}
 			} else {
 				// Add error message
 				const errorContent = `❌ Task execution failed\n\nError: ${finalResult.error}\n\nExecuted ${finalResult.executedTasks} task(s) before failure.`;
@@ -343,8 +418,38 @@ const handleRunTasks = async (
 		}
 
 		// Save the updated chat after a brief delay to ensure all messages are added
+		// Capture messages array snapshot to avoid race conditions
 		setTimeout(async () => {
-			await saveCurrentChat();
+			// Create a snapshot of the current messages array
+			const messagesSnapshot = Array.isArray(messages.value) ? [...messages.value] : [];
+
+			const hasValidMessages = messagesSnapshot.some(
+				(m) =>
+					m &&
+					typeof m === 'object' &&
+					m.content &&
+					typeof m.content === 'string' &&
+					m.content.trim() !== '',
+			);
+
+			if (hasValidMessages && messagesSnapshot.length > 0) {
+				// Temporarily replace messages.value with snapshot for save
+				const originalMessages = messages.value;
+				try {
+					messages.value = messagesSnapshot;
+					await saveCurrentChat();
+				} catch (error) {
+					console.error('Error saving chat after task execution:', error);
+				} finally {
+					// Restore original messages
+					messages.value = originalMessages;
+				}
+			} else {
+				console.debug('Skipping chat save after task execution: no valid messages', {
+					messageCount: messagesSnapshot.length,
+					hasValidMessages,
+				});
+			}
 		}, 100);
 	} catch (error) {
 		toast.showError(error, 'Task execution error', 'Failed to execute tasks.');
@@ -367,13 +472,86 @@ const handleCancelTasks = () => {
 };
 
 const saveCurrentChat = async () => {
-	// Filter out empty messages and ensure we have at least one message
-	const validMessages = messages.value.filter((m) => m.content && m.content.trim() !== '');
-	if (validMessages.length === 0) return;
+	// Early return if messages array is empty or invalid
+	if (!messages.value || !Array.isArray(messages.value) || messages.value.length === 0) {
+		console.debug('Skipping chat save: messages array is empty or invalid', {
+			isArray: Array.isArray(messages.value),
+			length: messages.value?.length || 0,
+			type: typeof messages.value,
+		});
+		return;
+	}
+
+	// Create a defensive copy to avoid mutations during processing
+	const messagesCopy = [...messages.value];
+
+	// Filter out empty, invalid, or malformed messages
+	const validMessages = messagesCopy
+		.filter((m) => {
+			// Must be an object
+			if (!m || typeof m !== 'object' || Array.isArray(m)) {
+				return false;
+			}
+			// Must have required fields
+			if (!m.id || !m.type || !m.timestamp) {
+				return false;
+			}
+			// Must have valid content
+			if (!m.content || typeof m.content !== 'string' || m.content.trim() === '') {
+				return false;
+			}
+			// Type must be valid
+			if (m.type !== 'user' && m.type !== 'assistant') {
+				return false;
+			}
+			return true;
+		})
+		.map((m) => ({
+			id: String(m.id),
+			type: m.type,
+			content: String(m.content).trim(),
+			timestamp: m.timestamp instanceof Date ? m.timestamp : new Date(m.timestamp),
+			...(m.isTaskList !== undefined && { isTaskList: m.isTaskList }),
+			...(m.tasks && Array.isArray(m.tasks) && { tasks: m.tasks }),
+		}));
+
+	// Don't save if there are no valid messages
+	if (!validMessages || validMessages.length === 0) {
+		console.debug('Skipping chat save: no valid messages after filtering', {
+			originalMessageCount: messagesCopy.length,
+			originalMessages: messagesCopy.map((m) => ({
+				hasId: !!m?.id,
+				hasType: !!m?.type,
+				hasContent: !!m?.content,
+				contentType: typeof m?.content,
+				contentLength: m?.content?.length || 0,
+				isObject: typeof m === 'object' && !Array.isArray(m),
+			})),
+		});
+		return;
+	}
+
+	// Ensure validMessages is a proper array before sending
+	if (!Array.isArray(validMessages)) {
+		console.error('validMessages is not an array!', {
+			type: typeof validMessages,
+			validMessages,
+		});
+		return;
+	}
 
 	try {
 		const firstUserMessage = validMessages.find((m) => m.type === 'user');
 		const title = firstUserMessage?.content?.substring(0, 50) || 'New Chat';
+
+		console.debug('Saving chat', {
+			messageCount: validMessages.length,
+			userMessages: validMessages.filter((m) => m.type === 'user').length,
+			assistantMessages: validMessages.filter((m) => m.type === 'assistant').length,
+			chatId: currentChatId.value,
+			isArray: Array.isArray(validMessages),
+		});
+
 		const response = await makeRestApiRequest<{ id: string; title: string }>(
 			rootStore.restApiContext,
 			'POST',
@@ -385,15 +563,33 @@ const saveCurrentChat = async () => {
 			},
 		);
 		currentChatId.value = response.id;
+		console.debug('Chat saved successfully', { chatId: response.id, title: response.title });
 	} catch (error) {
-		// Silently fail - chat saving is not critical
-		console.error('Failed to save chat:', error);
+		// Log but don't show error to user - chat saving is not critical
+		const errorMessage = error instanceof Error ? error.message : String(error);
+		console.error('Failed to save chat', {
+			error: errorMessage,
+			validMessageCount: validMessages?.length || 0,
+			originalMessageCount: messagesCopy.length,
+			isValidMessagesArray: Array.isArray(validMessages),
+		});
+		// Only show toast if it's a critical error (not a 400 validation error)
+		if (
+			!errorMessage.includes('Messages array is required') &&
+			!errorMessage.includes('400') &&
+			!errorMessage.includes('Bad Request')
+		) {
+			toast.showError(error, 'Failed to save chat');
+		}
 	}
 };
 
 const handleNewChat = async () => {
-	// Save current chat before starting new one
-	if (messages.value.length > 0) {
+	// Save current chat before starting new one (only if we have valid messages)
+	const hasValidMessages = messages.value.some(
+		(m) => m.content && typeof m.content === 'string' && m.content.trim() !== '',
+	);
+	if (hasValidMessages) {
 		await saveCurrentChat();
 	}
 
