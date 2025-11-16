@@ -19,7 +19,7 @@ import type { QueryDeepPartialEntity } from '@n8n/typeorm/query-builder/QueryPar
 import omit from 'lodash/omit';
 import pick from 'lodash/pick';
 import { BinaryDataService } from 'n8n-core';
-import { NodeApiError, PROJECT_ROOT } from 'n8n-workflow';
+import { NodeApiError, PROJECT_ROOT, type IDataObject } from 'n8n-workflow';
 import { v4 as uuid } from 'uuid';
 
 import { ActiveWorkflowManager } from '@/active-workflow-manager';
@@ -629,5 +629,25 @@ export class WorkflowService {
 
 			return { resourceType: 'workflow', ...workflow, ...(includeNodes ? { nodes } : {}) };
 		});
+	}
+
+	async getWorkflowDescriptions(
+		user: User,
+	): Promise<Array<{ workflowId: string; workflowDescription: IDataObject | null }>> {
+		// Get workflow IDs the user has read access to
+		const sharedWorkflowIds = await this.workflowSharingService.getSharedWorkflowIds(user, {
+			scopes: ['workflow:read'],
+		});
+
+		// Query only id and workflowDescription fields for performance
+		const workflows = await this.workflowRepository.findByIds(sharedWorkflowIds, {
+			fields: ['id', 'workflowDescription'],
+		});
+
+		// Return array of objects with workflowId and workflowDescription
+		return workflows.map((workflow) => ({
+			workflowId: workflow.id,
+			workflowDescription: workflow.workflowDescription ?? null,
+		}));
 	}
 }

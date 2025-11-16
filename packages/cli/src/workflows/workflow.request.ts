@@ -79,4 +79,6 @@ export declare namespace WorkflowRequest {
 		{},
 		GenerateWorkflowDescriptionRequestDto
 	>;
+
+	type GetDescriptions = AuthenticatedRequest;
 }

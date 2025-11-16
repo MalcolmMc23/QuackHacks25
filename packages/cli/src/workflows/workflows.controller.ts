@@ -256,6 +256,11 @@ export class WorkflowsController {
 		}
 	}
 
+	@Get('/descriptions')
+	async getWorkflowDescriptions(req: WorkflowRequest.GetDescriptions) {
+		return await this.workflowService.getWorkflowDescriptions(req.user);
+	}
+
 	@Get('/new')
 	async getNewName(req: WorkflowRequest.NewName) {
 		const requestedName = req.query.name ?? this.globalConfig.workflows.defaultName;
