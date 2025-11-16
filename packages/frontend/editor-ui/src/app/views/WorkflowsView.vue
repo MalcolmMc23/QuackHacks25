@@ -925,18 +925,60 @@ const addWorkflow = () => {
 	trackEmptyCardClick('blank');
 };
 
+const testingWebhook = ref(false);
+
 const testTaskmaster = async () => {
+	if (testingWebhook.value) return;
+
 	try {
-		const fakePrompt = 'please make tiktok vidoes';
+		testingWebhook.value = true;
+
+		const testPayload = {
+			body: 'Test video script generation',
+			idea: 'Create a TikTok about how to make the perfect morning coffee in under 60 seconds',
+		};
+
+		console.log('Testing webhook with payload:', testPayload);
+
+<<<<<<< Current (Your changes)
+<<<<<<< Current (Your changes)
 		const response = await makeRestApiRequest(
 			rootStore.restApiContext,
 			'POST',
-			'/workflows/taskmaster',
-			{ prompt: fakePrompt },
+			'/webhook/gen-script',
+=======
+		// When testing workflows manually, n8n uses /webhook-test/ instead of /webhook/
+		const response = await makeRestApiRequest(
+			rootStore.restApiContext,
+			'POST',
+			'/webhook-test/gen-script',
+>>>>>>> Incoming (Background Agent changes)
+=======
+		// Try production webhook endpoint since workflow is active
+		const response = await makeRestApiRequest(
+			rootStore.restApiContext,
+			'POST',
+			'/webhook/gen-script',
+>>>>>>> Incoming (Background Agent changes)
+			testPayload,
 		);
-		console.log('Taskmaster response:', response);
+
+		console.log('Webhook response:', response);
+
+		toast.showMessage({
+			title: i18n.baseText('workflows.webhook.test.success.title') || 'Webhook Test Successful',
+			message: i18n.baseText('workflows.webhook.test.success.message') || 'Check console for full response',
+			type: 'success',
+			duration: 5000,
+		});
 	} catch (error) {
-		console.error('Taskmaster error:', error);
+		console.error('Webhook test error:', error);
+		toast.showError(
+			error,
+			i18n.baseText('workflows.webhook.test.error.title') || 'Webhook Test Failed',
+		);
+	} finally {
+		testingWebhook.value = false;
 	}
 };
 
@@ -2394,10 +2436,12 @@ const onNameSubmit = async (name: string) => {
 			:class="$style.fixedButton"
 			type="secondary"
 			size="large"
-			data-test-id="taskmaster-test-button"
+			:loading="testingWebhook"
+			:disabled="testingWebhook"
+			data-test-id="webhook-test-button"
 			@click="testTaskmaster"
 		>
-			Test Taskmaster
+			{{ testingWebhook ? 'Testing...' : 'Test Webhook' }}
 		</N8nButton>
 	</div>
 </template>
