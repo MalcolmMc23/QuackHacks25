@@ -10,8 +10,6 @@ import { useProjectPages } from '@/features/collaboration/projects/composables/u
 import { useTelemetry } from '@/app/composables/useTelemetry';
 import { CREDENTIAL_EDIT_MODAL_KEY, CREDENTIAL_SELECT_MODAL_KEY } from '../credentials.constants';
 import { EnterpriseEditionFeature, VIEWS } from '@/app/constants';
-import InsightsSummary from '@/features/execution/insights/components/InsightsSummary.vue';
-import { useInsightsStore } from '@/features/execution/insights/insights.store';
 import { useExternalSecretsStore } from '@/features/integrations/externalSecrets.ee/externalSecrets.ee.store';
 import { useNodeTypesStore } from '@/app/stores/nodeTypes.store';
 import { useProjectsStore } from '@/features/collaboration/projects/projects.store';
@@ -43,7 +41,6 @@ const sourceControlStore = useSourceControlStore();
 const externalSecretsStore = useExternalSecretsStore();
 const projectsStore = useProjectsStore();
 const usersStore = useUsersStore();
-const insightsStore = useInsightsStore();
 
 const documentTitle = useDocumentTitle();
 const route = useRoute();
@@ -255,14 +252,7 @@ onMounted(() => {
 		@update:search="onSearchUpdated"
 	>
 		<template #header>
-			<ProjectHeader main-button="credential">
-				<InsightsSummary
-					v-if="overview.isOverviewSubPage && insightsStore.isSummaryEnabled"
-					:loading="insightsStore.weeklySummary.isLoading"
-					:summary="insightsStore.weeklySummary.state"
-					time-range="week"
-				/>
-			</ProjectHeader>
+			<ProjectHeader main-button="credential" />
 		</template>
 		<template #default="{ data }">
 			<CredentialCard

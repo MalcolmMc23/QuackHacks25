@@ -8,8 +8,6 @@ import { useI18n } from '@n8n/i18n';
 import { useProjectPages } from '@/features/collaboration/projects/composables/useProjectPages';
 import { useTelemetry } from '@/app/composables/useTelemetry';
 import { useToast } from '@/app/composables/useToast';
-import InsightsSummary from '@/features/execution/insights/components/InsightsSummary.vue';
-import { useInsightsStore } from '@/features/execution/insights/insights.store';
 import { useExecutionsStore } from '../executions.store';
 import { useWorkflowsStore } from '@/app/stores/workflows.store';
 import { storeToRefs } from 'pinia';
@@ -22,7 +20,6 @@ const telemetry = useTelemetry();
 const externalHooks = useExternalHooks();
 const workflowsStore = useWorkflowsStore();
 const executionsStore = useExecutionsStore();
-const insightsStore = useInsightsStore();
 const documentTitle = useDocumentTitle();
 const toast = useToast();
 const overview = useProjectPages();
@@ -100,13 +97,6 @@ async function onExecutionStop() {
 		@execution:stop="onExecutionStop"
 		@update:filters="onUpdateFilters"
 	>
-		<ProjectHeader>
-			<InsightsSummary
-				v-if="overview.isOverviewSubPage && insightsStore.isSummaryEnabled"
-				:loading="insightsStore.weeklySummary.isLoading"
-				:summary="insightsStore.weeklySummary.state"
-				time-range="week"
-			/>
-		</ProjectHeader>
+		<ProjectHeader />
 	</GlobalExecutionsList>
 </template>

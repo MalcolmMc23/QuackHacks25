@@ -709,9 +709,8 @@ const fetchWorkflows = async () => {
 
 		workflowsAndFolders.value = fetchedResources;
 
-		// Toggle ownership cards visibility only after we have fetched the workflows
-		showCardsBadge.value =
-			projectPages.isOverviewSubPage || projectPages.isSharedSubPage || filters.value.search !== '';
+		// Ownership badges are disabled
+		showCardsBadge.value = false;
 
 		return fetchedResources;
 	} catch (error) {
@@ -1897,14 +1896,7 @@ const onNameSubmit = async (name: string) => {
 				<ProjectHeader
 					:has-active-callouts="hasActiveCallouts"
 					@create-folder="createFolderInCurrent"
-				>
-					<InsightsSummary
-						v-if="showInsights"
-						:loading="insightsStore.weeklySummary.isLoading"
-						:summary="insightsStore.weeklySummary.state"
-						time-range="week"
-					/>
-				</ProjectHeader>
+				/>
 			</template>
 			<template v-if="foldersEnabled || showRegisteredCommunityCTA" #add-button>
 				<N8nTooltip
@@ -2163,7 +2155,7 @@ const onNameSubmit = async (name: string) => {
 						:read-only="readOnlyEnv"
 						:data-resourceid="(data as WorkflowResource).id"
 						:data-resourcename="(data as WorkflowResource).name"
-						:show-ownership-badge="showCardsBadge"
+						:show-ownership-badge="false"
 						:are-folders-enabled="settingsStore.isFoldersFeatureEnabled"
 						:are-tags-enabled="settingsStore.areTagsEnabled"
 						:is-mcp-enabled="mcpEnabled"
@@ -2486,11 +2478,15 @@ const onNameSubmit = async (name: string) => {
 	position: relative;
 	z-index: 1;
 	min-height: 100vh;
+	width: 100%;
+	margin: 0;
+	padding: 0;
 
 	// Ensure content is above background gradients
 	> * {
 		position: relative;
 		z-index: 1;
+		width: 100%;
 	}
 
 	// Update workflow cards
