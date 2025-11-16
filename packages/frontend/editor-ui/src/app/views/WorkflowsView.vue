@@ -2367,6 +2367,7 @@ const onNameSubmit = async (name: string) => {
 		type="primary"
 		size="large"
 		data-test-id="fixed-bottom-right-button"
+		@click="router.push('/orchestrator')"
 	>
 		Button
 	</N8nButton>

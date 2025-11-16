@@ -105,6 +105,7 @@ const MigrationReportView = async () =>
 
 const MigrationRuleReportView = async () =>
 	await import('@/features/settings/migrationReport/MigrationRuleDetail.vue');
+const OrchestratorView = async () => await import('@/app/views/OrchestratorView.vue');
 
 function getTemplatesRedirect(defaultRedirect: VIEWS[keyof VIEWS]): { name: string } | false {
 	const settingsStore = useSettingsStore();
@@ -888,6 +889,17 @@ export const routes: RouteRecordRaw[] = [
 			telemetry: {
 				pageCategory: 'auth',
 			},
+		},
+	},
+	{
+		path: '/orchestrator',
+		name: VIEWS.ORCHESTRATOR,
+		components: {
+			default: OrchestratorView,
+			sidebar: MainSidebar,
+		},
+		meta: {
+			middleware: ['authenticated'],
 		},
 	},
 	...projectsRoutes,
