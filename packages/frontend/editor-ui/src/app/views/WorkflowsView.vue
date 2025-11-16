@@ -927,8 +927,7 @@ const addWorkflow = () => {
 
 const testTaskmaster = async () => {
 	try {
-		const fakePrompt =
-			'Create a workflow that processes customer orders and sends email notifications';
+		const fakePrompt = 'please make tiktok vidoes';
 		const response = await makeRestApiRequest(
 			rootStore.restApiContext,
 			'POST',

@@ -209,42 +209,58 @@ the outputType can only be, "JSON", "png", or "noOutput"
 		// Get workflow descriptions for the user
 		const workflowDescriptions = await this.workflowService.getWorkflowDescriptions(user);
 
+		// Console log workflow descriptions response
+		console.log('========================================');
+		console.log('WORKFLOW DESCRIPTIONS RESPONSE:');
+		console.log('========================================');
+		console.log(JSON.stringify(workflowDescriptions, null, 2));
+		console.log('========================================');
+		console.log(`Total workflows: ${workflowDescriptions.length}`);
+		console.log('========================================\n');
+
 		if (workflowDescriptions.length === 0) {
 			throw new BadRequestError('No workflows available for task breakdown');
 		}
 
-		const systemPrompt = `You are a helpful assistant that responds with JSON only. Your task is to break down a user's prompt into tasks, with exactly one task per workflow provided.
+		const systemPrompt = `You are a helpful assistant that responds with JSON only. Your task is to break down a user's prompt into tasks, where each task corresponds to a workflow.
 
-The response must be a JSON object with a "tasks" array. The number of tasks in the array MUST match the number of workflows provided (${workflowDescriptions.length} workflows).
+IMPORTANT RULES:
+- You do NOT need to create a task for every workflow - only create tasks for workflows that are relevant to the user's prompt
+- However, EVERY task you create MUST reference a valid workflowId from the provided workflows
+- You can have fewer tasks than workflows, but you cannot have more tasks than workflows
+- Each task must reference a unique workflowId (no duplicate workflowIds)
 
-Each task should:
-- Correspond to one workflow
-- Outline what that workflow should accomplish based on the user's prompt
-- Be specific and actionable
+You will look at the input and outputs of each workflow. Workflow 1 will have a standard input and output. If the workflow before it doesn't have the proper output, it can't go before it. So if workflow 1 has an output of JSON and the input for workflow 2 is also JSON, it will work. If it doesn't match, you will respond with null for that task.
 
 Example response format:
 {
   "tasks": [
     {
       "workflowId": "workflow-id-1",
-      "task": "Description of what this workflow should do"
+      "task": "Description of what this workflow should do",
+      "input": "JSON",
+      "output": "JSON"
     },
     {
       "workflowId": "workflow-id-2",
-      "task": "Description of what this workflow should do"
+      "task": "Description of what this workflow should do",
+      "input": "JSON",
+      "output": "JSON"
     }
   ]
 }
+
+Note: If no workflows are relevant to the user's prompt, return an empty tasks array: { "tasks": [] }
 
 Respond with JSON only. Do not include any markdown formatting or code blocks. Return only valid JSON.`;
 
 		const workflowsJson = JSON.stringify(workflowDescriptions, null, 2);
 		const userPrompt = `User prompt: ${prompt}
 
-Available workflows:
+Available workflows (${workflowDescriptions.length} total):
 ${workflowsJson}
 
-Break down the user's prompt into exactly ${workflowDescriptions.length} tasks, one for each workflow. Each task should map to a workflow and describe what that workflow should accomplish.`;
+Break down the user's prompt into tasks. Only create tasks for workflows that are relevant to the user's prompt. Each task must reference a valid workflowId from the available workflows above. You can create fewer tasks than the total number of workflows if some workflows are not relevant.`;
 
 		const requestBody: OpenRouterRequest = {
 			model: this.geminiModel,
@@ -296,6 +312,13 @@ Break down the user's prompt into exactly ${workflowDescriptions.length} tasks, 
 					.replace(/```\n?/g, '')
 					.trim();
 				parsedResponse = JSON.parse(cleanedContent) as IDataObject;
+
+				// Console log OpenRouter response
+				console.log('========================================');
+				console.log('OPENROUTER AI RESPONSE:');
+				console.log('========================================');
+				console.log(JSON.stringify(parsedResponse, null, 2));
+				console.log('========================================\n');
 			} catch (parseError) {
 				this.logger.error('Failed to parse OpenRouter response as JSON', {
 					content,
