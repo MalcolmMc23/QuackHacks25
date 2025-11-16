@@ -301,15 +301,12 @@ const handleRunTasks = async (
 		// Handle final result
 		if (finalResult) {
 			if (finalResult.success) {
-				// Always show a base success message so the user knows the task chain completed
-				const baseSuccessContent = finalResult.summary
-					? `✅ All tasks completed successfully!\n\n${finalResult.summary}`
-					: finalResult.output
-						? `✅ All tasks completed successfully!\n\nResult:\n\`\`\`json\n${JSON.stringify(finalResult.output, null, 2)}\n\`\`\``
-						: '✅ All tasks completed successfully!';
+				// Show a temporary processing message (will be replaced with synthesized response)
+				const processingMessageId = (Date.now() + 1).toString();
+				const baseSuccessContent = '✅ Processing results...';
 
 				messages.value.push({
-					id: (Date.now() + 1).toString(),
+					id: processingMessageId,
 					type: 'assistant',
 					content: baseSuccessContent,
 					timestamp: new Date(),
@@ -321,22 +318,22 @@ const handleRunTasks = async (
 					type: 'success',
 				});
 
-				// Extract and normalize tool results using the canonical ToolResult shape
+				// Extract and normalize tool results for LLM synthesis
 				try {
-					const rawToolResults = Array.isArray(finalResult.toolResults)
-						? finalResult.toolResults
-						: finalResult.output
-							? Array.isArray(finalResult.output)
-								? finalResult.output
-								: [finalResult.output]
-							: [];
+					// Extract tool results from the output
+					const rawToolResults = finalResult.output
+						? Array.isArray(finalResult.output)
+							? finalResult.output
+							: [finalResult.output]
+						: [];
 
-					const toolResults: ToolResult[] = rawToolResults
+					const toolResults = rawToolResults
 						.flatMap((item: unknown) => {
 							if (!item) return [];
 							return Array.isArray(item) ? item : [item];
 						})
 						.map((item: any) => {
+							// Ensure tool result has the proper shape
 							const source =
 								typeof item?.source === 'string' && item.source.trim().length > 0
 									? item.source
@@ -350,46 +347,112 @@ const handleRunTasks = async (
 									? (item as { data?: unknown }).data
 									: item;
 
-							return {
-								source,
-								reply,
-								data,
-							} as ToolResult;
+							return { source, reply, data };
 						})
 						.filter((tr) => !!tr && typeof tr.source === 'string' && !!tr.reply);
 
-					const normalizedUserPrompt = userPrompt?.trim() ?? '';
+					// Ensure we have a valid user prompt
+					// If the user didn't provide a prompt, use a generic one asking for the workflow output
+					const normalizedUserPrompt =
+						userPrompt && userPrompt.trim().length > 0
+							? userPrompt.trim()
+							: 'What is the output of this workflow? Please provide a clear summary of the results.';
 
-					// Only call the orchestrator LLM if we have meaningful tool results and a user question
-					if (toolResults.length > 0 && normalizedUserPrompt) {
-						const llmMessages = buildMessages(normalizedUserPrompt, toolResults);
+					// Build conversation history (exclude progress and processing messages)
+					const conversationHistory = messages.value
+						.filter(
+							(m) =>
+								m.id !== progressMessageId &&
+								m.id !== processingMessageId &&
+								!m.content.includes('Processing results'),
+						)
+						.slice(0, -1) // Exclude the processing message we just added
+						.map((m) => ({
+							role: m.type === 'user' ? ('user' as const) : ('assistant' as const),
+							content: m.content,
+						}));
 
-						const summaryResponse = await makeRestApiRequest<{ answer: string }>(
+					// Call the orchestrator to synthesize tool results with conversation context
+					if (toolResults.length > 0) {
+						console.log('Calling /orchestration/synthesize with:', {
+							userPrompt: normalizedUserPrompt,
+							userPromptLength: normalizedUserPrompt.length,
+							toolResultsCount: toolResults.length,
+							conversationHistoryLength: conversationHistory.length,
+							toolResults: toolResults.map((tr) => ({
+								source: tr.source,
+								replyLength: tr.reply?.length || 0,
+							})),
+						});
+
+						const synthesizeResponse = await makeRestApiRequest<{ content: string }>(
 							rootStore.restApiContext,
 							'POST',
-							'/orchestration/chats',
+							'/orchestration/synthesize',
 							{
-								messages: llmMessages,
-								taskResults: toolResults,
+								userPrompt: normalizedUserPrompt,
+								toolResults,
+								conversationHistory,
 							},
 						);
 
-						if (summaryResponse?.answer) {
-							messages.value.push({
-								id: (Date.now() + 2).toString(),
-								type: 'assistant',
-								content: summaryResponse.answer,
-								timestamp: new Date(),
-							});
+						if (synthesizeResponse?.content) {
+							// Replace the processing message with the synthesized response
+							const processingMsgIndex = messages.value.findIndex(
+								(m) => m.id === processingMessageId,
+							);
+							if (processingMsgIndex !== -1) {
+								messages.value[processingMsgIndex].content = synthesizeResponse.content;
+							} else {
+								// Fallback: add as new message
+								messages.value.push({
+									id: (Date.now() + 2).toString(),
+									type: 'assistant',
+									content: synthesizeResponse.content,
+									timestamp: new Date(),
+								});
+							}
+						} else {
+							// No content from synthesis, show fallback message
+							const processingMsgIndex = messages.value.findIndex(
+								(m) => m.id === processingMessageId,
+							);
+							if (processingMsgIndex !== -1) {
+								messages.value[processingMsgIndex].content =
+									'✅ Tasks completed successfully, but no response was generated.';
+							}
+						}
+					} else if (finalResult.summary) {
+						// Use summary if no tool results
+						const processingMsgIndex = messages.value.findIndex(
+							(m) => m.id === processingMessageId,
+						);
+						if (processingMsgIndex !== -1) {
+							messages.value[processingMsgIndex].content = finalResult.summary;
+						}
+					} else {
+						// No tool results and no summary - generic success
+						const processingMsgIndex = messages.value.findIndex(
+							(m) => m.id === processingMessageId,
+						);
+						if (processingMsgIndex !== -1) {
+							messages.value[processingMsgIndex].content = '✅ All tasks completed successfully!';
 						}
 					}
 				} catch (summaryError) {
-					console.error('Failed to summarize tool results via orchestrator LLM:', summaryError);
-					// Non-fatal: tasks succeeded; we already showed a base success message
+					console.error('Failed to synthesize tool results via orchestrator LLM:', summaryError);
+
+					// Replace processing message with fallback
+					const processingMsgIndex = messages.value.findIndex((m) => m.id === processingMessageId);
+					if (processingMsgIndex !== -1) {
+						messages.value[processingMsgIndex].content =
+							'✅ Tasks completed successfully, but I encountered an error generating a response. Please try again.';
+					}
+
 					toast.showError(
 						summaryError,
-						'Orchestrator summary error',
-						'Tasks ran successfully, but summarizing tool results failed.',
+						'Synthesis error',
+						'Tasks ran successfully, but synthesizing results failed.',
 					);
 				}
 			} else {

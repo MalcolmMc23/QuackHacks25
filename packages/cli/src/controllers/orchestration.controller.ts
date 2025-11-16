@@ -76,6 +76,7 @@ type SaveChatRequest = {
 type SynthesizeRequest = {
 	userPrompt: string;
 	toolResults: ToolResult[];
+	conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
 };
 
 type SynthesizeResponse = {
@@ -920,19 +921,23 @@ export class OrchestrationController {
 		req: AuthenticatedRequest,
 		@Body body: SynthesizeRequest,
 	): Promise<SynthesizeResponse> {
-		const { userPrompt, toolResults } = body;
+		let { userPrompt, toolResults, conversationHistory } = body;
+
+		// Provide a default user prompt if none was provided (safety net)
+		if (!userPrompt || typeof userPrompt !== 'string' || userPrompt.trim() === '') {
+			userPrompt =
+				'What is the output of this workflow? Please provide a clear summary of the results.';
+			this.logger.warn('No userPrompt provided, using default', { userId: req.user.id });
+		}
 
 		this.logger.debug('Synthesize request received', {
 			userId: req.user.id,
 			userPrompt,
+			userPromptLength: userPrompt.length,
 			toolResultsCount: toolResults?.length || 0,
 			toolSources: toolResults?.map((r) => r.source) || [],
+			conversationHistoryLength: conversationHistory?.length || 0,
 		});
-
-		// Validate input
-		if (!userPrompt || typeof userPrompt !== 'string' || userPrompt.trim() === '') {
-			throw new BadRequestError('userPrompt is required and must be a non-empty string');
-		}
 
 		if (!toolResults || !Array.isArray(toolResults) || toolResults.length === 0) {
 			throw new BadRequestError('toolResults is required and must be a non-empty array');
@@ -963,31 +968,52 @@ export class OrchestrationController {
 			sources: normalizedResults.map((r) => r.source),
 		});
 
-		// Build messages array for LLM
-		const systemMessage = {
-			role: 'system' as const,
+		// Build messages array for LLM with conversation context
+		const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+
+		// Add system message
+		messages.push({
+			role: 'system',
 			content: [
-				'You are an orchestrator assistant.',
-				"You are given the user's question and JSON results from several tools (polymarket, weather, news, etc.).",
-				'Your job is to synthesize these tool results into a concise, helpful answer.',
-				'Prefer the most recent, high-confidence data in the tool results.',
-				'Format your response in a clear, readable way.',
+				'You are an orchestrator assistant helping users with their questions.',
+				'You have access to conversation history and tool results from various sources (polymarket, weather, news, etc.).',
+				"Your job is to synthesize the tool results into a concise, helpful answer that addresses the user's question.",
+				'Use the conversation history to understand context and provide coherent responses.',
+				'Format your response in a clear, readable way using markdown when appropriate.',
 				'If the tool results contain lists or structured data, present them in an organized manner.',
 			].join(' '),
-		};
+		});
 
-		const userMessage = {
-			role: 'user' as const,
+		// Add conversation history (if provided)
+		if (conversationHistory && conversationHistory.length > 0) {
+			this.logger.debug('Including conversation history in synthesis', {
+				historyLength: conversationHistory.length,
+			});
+
+			// Add previous conversation messages (limit to last 10 to avoid token limits)
+			const recentHistory = conversationHistory.slice(-10);
+			for (const msg of recentHistory) {
+				messages.push({
+					role: msg.role,
+					content: msg.content,
+				});
+			}
+		}
+
+		// Add current user question
+		messages.push({
+			role: 'user',
 			content: userPrompt,
-		};
+		});
 
-		const toolResultsMessage = {
-			role: 'assistant' as const,
+		// Add tool results as assistant message
+		messages.push({
+			role: 'assistant',
 			content:
-				'Here are JSON tool results you can use:\n\n' + JSON.stringify(normalizedResults, null, 2),
-		};
-
-		const messages = [systemMessage, userMessage, toolResultsMessage];
+				'Here are the tool results I retrieved:\n\n' +
+				JSON.stringify(normalizedResults, null, 2) +
+				'\n\nLet me synthesize this information to answer your question.',
+		});
 
 		// Call OpenRouter to synthesize
 		const apiKey = process.env.OPENROUTER_API_KEY;
