@@ -45,6 +45,8 @@ import {
 } from '@n8n/design-system';
 import { useMCPStore } from '@/features/ai/mcpAccess/mcp.store';
 import { useMcp } from '@/features/ai/mcpAccess/composables/useMcp';
+import { useRootStore } from '@n8n/stores/useRootStore';
+import { WEBHOOK_NODE_TYPE } from '@/app/constants/nodeTypes';
 const WORKFLOW_LIST_ITEM_ACTIONS = {
 	OPEN: 'open',
 	SHARE: 'share',
@@ -109,6 +111,7 @@ const workflowsStore = useWorkflowsStore();
 const projectsStore = useProjectsStore();
 const foldersStore = useFoldersStore();
 const mcpStore = useMCPStore();
+const rootStore = useRootStore();
 
 const hiddenBreadcrumbsItemsAsync = ref<Promise<PathItem[]>>(new Promise(() => {}));
 const cachedHiddenBreadcrumbsItems = ref<PathItem[]>([]);
@@ -498,6 +501,54 @@ const tags = computed(
 	() =>
 		props.data.tags?.map((tag) => (typeof tag === 'string' ? { id: tag, name: tag } : tag)) ?? [],
 );
+
+async function runWebhook() {
+	try {
+		console.log('[WorkflowCard] Starting workflow execution for:', props.data.id);
+		console.log('[WorkflowCard] Workflow active state:', props.data.active);
+
+		// Fetch the full workflow data first
+		const workflow = await workflowsStore.fetchWorkflow(props.data.id);
+		console.log('[WorkflowCard] Fetched workflow:', workflow);
+
+		// Find webhook trigger nodes in the workflow
+		const webhookNodes = workflow.nodes.filter((node) => node.type === WEBHOOK_NODE_TYPE);
+		console.log('[WorkflowCard] Found webhook nodes:', webhookNodes);
+
+		if (webhookNodes.length === 0) {
+			toast.showError(new Error('No webhook triggers found in this workflow'), 'No webhook found');
+			return;
+		}
+
+		// Get the first webhook node
+		const webhookNode = webhookNodes[0];
+		console.log('[WorkflowCard] Webhook node:', webhookNode.name);
+
+		// Execute the workflow directly by triggering from the webhook node
+		console.log('[WorkflowCard] Executing workflow from webhook trigger...');
+
+		// Convert tags to strings if they are ITag objects
+		const workflowData = {
+			...workflow,
+			tags: workflow.tags?.map((tag) => (typeof tag === 'string' ? tag : tag.id)),
+		};
+
+		// Run the workflow starting from the webhook trigger node
+		await workflowsStore.runWorkflow({
+			workflowData,
+			startNodes: [webhookNode.name],
+		});
+
+		console.log('[WorkflowCard] Workflow execution started successfully');
+		toast.showMessage({
+			title: 'Workflow executed successfully',
+			type: 'success',
+		});
+	} catch (error) {
+		console.error('[WorkflowCard] Failed to execute workflow:', error);
+		toast.showError(error, 'Failed to execute workflow');
+	}
+}
 </script>
 
 <template>
@@ -627,6 +678,16 @@ const tags = computed(
 					data-test-id="workflow-card-description-json"
 				/>
 
+				<button
+					v-if="!data.isArchived"
+					:class="$style.runButton"
+					class="mr-s"
+					data-test-id="workflow-card-run-button"
+					@click="runWebhook"
+				>
+					Run
+				</button>
+
 				<N8nActionToggle
 					:actions="actions"
 					theme="dark"
@@ -719,6 +780,26 @@ const tags = computed(
 
 	&:hover {
 		color: var(--color--text);
+	}
+}
+
+.runButton {
+	background-color: #ff6b35;
+	color: white;
+	border: none;
+	border-radius: var(--radius);
+	padding: var(--spacing--2xs) var(--spacing--sm);
+	font-size: var(--font-size--sm);
+	font-weight: var(--font-weight--bold);
+	cursor: pointer;
+	transition: background-color 0.2s ease;
+
+	&:hover {
+		background-color: #ff5722;
+	}
+
+	&:active {
+		background-color: #e64a19;
 	}
 }
 
