@@ -19,7 +19,12 @@ const PLACEHOLDERS = [
 type OrchestratorChatResponse = {
 	content: string;
 	isTaskList?: boolean;
-	tasks?: Array<{ workflowId: string; task: string }>;
+	tasks?: Array<{
+		workflowId: string;
+		task: string;
+		input?: string;
+		output?: string;
+	}>;
 };
 
 const placeholderIndex = ref(0);
@@ -35,7 +40,12 @@ const messages = ref<
 		content: string;
 		timestamp: Date;
 		isTaskList?: boolean;
-		tasks?: Array<{ workflowId: string; task: string }>;
+		tasks?: Array<{
+			workflowId: string;
+			task: string;
+			input?: string;
+			output?: string;
+		}>;
 	}>
 >([]);
 
@@ -122,7 +132,12 @@ const sendMessage = async () => {
 			content?: string;
 			chunk?: string;
 			isTaskList?: boolean;
-			tasks?: Array<{ workflowId: string; task: string }>;
+			tasks?: Array<{
+				workflowId: string;
+				task: string;
+				input?: string;
+				output?: string;
+			}>;
 		}>(
 			rootStore.restApiContext,
 			'/orchestration/chat/stream',
@@ -187,7 +202,11 @@ const handleKeyPress = (e: KeyboardEvent) => {
 	}
 };
 
-const handleRunTasks = async (tasks: Array<{ workflowId: string; task: string }>) => {
+const handleRunTasks = async (
+	tasks: Array<{ workflowId: string; task: string; input?: string; output?: string }>,
+) => {
+	console.log('handleRunTasks called with tasks:', tasks);
+
 	// Validate tasks array
 	if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
 		toast.showError(
@@ -198,14 +217,23 @@ const handleRunTasks = async (tasks: Array<{ workflowId: string; task: string }>
 		return;
 	}
 
-	// Filter out any invalid tasks
-	const validTasks = tasks.filter(
-		(task) =>
-			task &&
-			task.workflowId &&
-			typeof task.workflowId === 'string' &&
-			task.workflowId.trim() !== '',
-	);
+	// Filter out any invalid tasks and add default input/output if missing
+	const validTasks = tasks
+		.filter(
+			(task) =>
+				task &&
+				task.workflowId &&
+				typeof task.workflowId === 'string' &&
+				task.workflowId.trim() !== '',
+		)
+		.map((task) => ({
+			...task,
+			// Add default input/output if not provided by AI
+			input: task.input || 'JSON',
+			output: task.output || 'JSON',
+		}));
+
+	console.log('Valid tasks prepared for execution:', validTasks);
 
 	if (validTasks.length === 0) {
 		toast.showError(
@@ -217,30 +245,115 @@ const handleRunTasks = async (tasks: Array<{ workflowId: string; task: string }>
 	}
 
 	try {
-		const response = await makeRestApiRequest<{
-			success: boolean;
-			executed: number;
-			failed: number;
-			errors?: Array<{ workflowId: string; error: string }>;
-		}>(rootStore.restApiContext, 'POST', '/orchestration/execute-tasks', { tasks: validTasks });
+		// Add a progress message
+		const progressMessageId = Date.now().toString();
+		messages.value.push({
+			id: progressMessageId,
+			type: 'assistant',
+			content: 'Starting task execution...',
+			timestamp: new Date(),
+		});
 
-		if (response.success && response.executed > 0) {
-			toast.showMessage({
-				title: 'Tasks executed',
-				message: `Successfully executed ${response.executed} task(s)${response.failed > 0 ? `. ${response.failed} failed.` : '.'}`,
-				type: 'success',
-			});
-		} else if (response.failed > 0) {
-			const errorMessages =
-				response.errors?.map((e) => `${e.workflowId}: ${e.error}`).join(', ') || 'Unknown error';
-			toast.showError(
-				new Error(`Failed to execute tasks: ${errorMessages}`),
-				'Task execution failed',
-				`Failed to execute ${response.failed} task(s).`,
-			);
+		// Get the last user message to use as userPrompt
+		const lastUserMessage = messages.value.filter((m) => m.type === 'user').pop();
+		const userPrompt = lastUserMessage?.content || '';
+
+		// Use streaming to get progress updates
+		let progressContent = 'Starting task execution...\n\n';
+		let finalResult: any = null;
+
+		await streamRequest<any>(
+			rootStore.restApiContext,
+			'/orchestration/execute-tasks',
+			{ tasks: validTasks, userPrompt },
+			(data) => {
+				try {
+					// Check if this is a progress update or final result
+					if (data.isFinal) {
+						finalResult = data;
+					} else if (data.status) {
+						// This is a progress update
+						const statusEmoji =
+							{
+								starting: '🔄',
+								executing: '⚙️',
+								completed: '✅',
+								error: '❌',
+							}[data.status] || '•';
+
+						progressContent += `${statusEmoji} Task ${data.currentTask}/${data.totalTasks}: ${data.message}\n`;
+
+						// Update the progress message
+						const progressMsg = messages.value.find((m) => m.id === progressMessageId);
+						if (progressMsg) {
+							progressMsg.content = progressContent;
+						}
+					}
+				} catch (e) {
+					console.error('Failed to process progress update:', e, data);
+				}
+			},
+		);
+
+		// Handle final result
+		if (finalResult) {
+			if (finalResult.success) {
+				// Add final success message
+				const successContent = finalResult.summary
+					? `✅ All tasks completed successfully!\n\n${finalResult.summary}`
+					: finalResult.output
+						? `✅ All tasks completed successfully!\n\nResult:\n\`\`\`json\n${JSON.stringify(finalResult.output, null, 2)}\n\`\`\``
+						: '✅ All tasks completed successfully!';
+
+				messages.value.push({
+					id: (Date.now() + 1).toString(),
+					type: 'assistant',
+					content: successContent,
+					timestamp: new Date(),
+				});
+
+				toast.showMessage({
+					title: 'Tasks executed',
+					message: `Successfully executed ${finalResult.executedTasks} task(s)`,
+					type: 'success',
+				});
+			} else {
+				// Add error message
+				const errorContent = `❌ Task execution failed\n\nError: ${finalResult.error}\n\nExecuted ${finalResult.executedTasks} task(s) before failure.`;
+
+				messages.value.push({
+					id: (Date.now() + 1).toString(),
+					type: 'assistant',
+					content: errorContent,
+					timestamp: new Date(),
+				});
+
+				toast.showError(
+					new Error(finalResult.error || 'Unknown error'),
+					'Task execution failed',
+					`Failed at task: ${finalResult.failedTask || 'unknown'}`,
+				);
+			}
 		}
+
+		// Remove the progress message as we've added a final message
+		const progressIndex = messages.value.findIndex((m) => m.id === progressMessageId);
+		if (progressIndex !== -1) {
+			messages.value.splice(progressIndex, 1);
+		}
+
+		// Save the updated chat after a brief delay to ensure all messages are added
+		setTimeout(async () => {
+			await saveCurrentChat();
+		}, 100);
 	} catch (error) {
 		toast.showError(error, 'Task execution error', 'Failed to execute tasks.');
+
+		// Remove progress message on error
+		const progressIndex = messages.value.findIndex((m) => m.id === progressMessageId);
+		if (progressIndex !== -1) {
+			messages.value.splice(progressIndex, 1);
+		}
 	}
 };
 
@@ -254,10 +367,12 @@ const handleCancelTasks = () => {
 };
 
 const saveCurrentChat = async () => {
-	if (messages.value.length === 0) return;
+	// Filter out empty messages and ensure we have at least one message
+	const validMessages = messages.value.filter((m) => m.content && m.content.trim() !== '');
+	if (validMessages.length === 0) return;
 
 	try {
-		const firstUserMessage = messages.value.find((m) => m.type === 'user');
+		const firstUserMessage = validMessages.find((m) => m.type === 'user');
 		const title = firstUserMessage?.content?.substring(0, 50) || 'New Chat';
 		const response = await makeRestApiRequest<{ id: string; title: string }>(
 			rootStore.restApiContext,
@@ -266,7 +381,7 @@ const saveCurrentChat = async () => {
 			{
 				chatId: currentChatId.value || undefined,
 				title,
-				messages: messages.value,
+				messages: validMessages,
 			},
 		);
 		currentChatId.value = response.id;

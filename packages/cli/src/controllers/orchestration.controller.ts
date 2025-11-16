@@ -10,6 +10,7 @@ import { NotFoundError } from '@/errors/response-errors/not-found.error';
 import { WorkflowDescriptionAiService } from '@/workflows/workflow-description-ai.service';
 import { WorkflowFinderService } from '@/workflows/workflow-finder.service';
 import { WorkflowExecutionService } from '@/workflows/workflow-execution.service';
+import { TaskExecutionService } from '@/workflows/task-execution.service';
 import { STREAM_SEPARATOR } from '@/constants';
 import { OrchestratorChatRepository } from './orchestrator-chat.repository';
 
@@ -28,14 +29,22 @@ type OrchestratorChatResponse = {
 };
 
 type ExecuteTasksRequest = {
-	tasks: Array<{ workflowId: string; task: string }>;
+	tasks: Array<{
+		workflowId: string;
+		task: string;
+		input: string; // "JSON" | "png" | "noInput"
+		output: string; // "JSON" | "png" | "noOutput"
+	}>;
+	userPrompt?: string;
 };
 
 type ExecuteTasksResponse = {
 	success: boolean;
-	executed: number;
-	failed: number;
-	errors?: Array<{ workflowId: string; error: string }>;
+	output?: any;
+	summary?: string;
+	error?: string;
+	executedTasks: number;
+	failedTask?: string;
 };
 
 type SaveChatRequest = {
@@ -434,71 +443,146 @@ export class OrchestrationController {
 		}
 	}
 
-	@Post('/execute-tasks')
+	@Post('/execute-tasks', { usesTemplates: true })
 	async executeTasks(
 		req: AuthenticatedRequest,
+		res: FlushableResponse,
 		@Body body: ExecuteTasksRequest,
-	): Promise<ExecuteTasksResponse> {
-		const { tasks } = body;
+	) {
+		// Set streaming headers first
+		res.header('Content-Type', 'application/json-lines').flush();
 
-		if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
-			throw new BadRequestError('Tasks array is required and must not be empty');
-		}
+		try {
+			const requestBody =
+				body && Object.keys(body).length > 0 ? body : (req.body as ExecuteTasksRequest);
+			const { tasks, userPrompt } = requestBody ?? {};
 
-		// Console log the task list being executed
-		console.log('========================================');
-		console.log('ORCHESTRATOR EXECUTING TASK LIST:');
-		console.log('========================================');
-		console.log(JSON.stringify(tasks, null, 2));
-		console.log(`Total tasks to execute: ${tasks.length}`);
-		console.log('========================================\n');
+			if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+				const errorResponse = {
+					success: false,
+					error: 'Tasks array is required and must not be empty',
+					executedTasks: 0,
+					isFinal: true,
+				};
+				res.write(JSON.stringify(errorResponse) + STREAM_SEPARATOR);
+				res.end();
+				return;
+			}
 
-		const workflowFinderService = Container.get(WorkflowFinderService);
-		const workflowExecutionService = Container.get(WorkflowExecutionService);
+			// Console log the task list being executed
+			console.log('========================================');
+			console.log('ORCHESTRATOR EXECUTING TASK LIST:');
+			console.log('========================================');
+			console.log(JSON.stringify(tasks, null, 2));
+			console.log(`Total tasks to execute: ${tasks.length}`);
+			console.log('========================================\n');
 
-		const results: ExecuteTasksResponse = {
-			success: true,
-			executed: 0,
-			failed: 0,
-			errors: [],
-		};
+			const taskExecutionService = Container.get(TaskExecutionService);
 
-		// Execute each task
-		for (const task of tasks) {
+			// Execute the task chain with progress streaming
+			const result = await taskExecutionService.executeTaskChain(
+				req.user,
+				tasks,
+				userPrompt || '',
+				(progress) => {
+					try {
+						// Stream progress updates to the client
+						res.write(JSON.stringify(progress) + STREAM_SEPARATOR);
+						res.flush();
+					} catch (writeError) {
+						console.error('Error writing progress update:', writeError);
+					}
+				},
+			);
+
+			// Check if the last task has no output and we need to generate a summary
+			const lastTask = tasks[tasks.length - 1];
+			let finalResponse: ExecuteTasksResponse;
+
+			if (result.success && lastTask?.output === 'noOutput') {
+				// Generate AI summary
+				const summary = await this.generateTaskSummary(result, tasks, userPrompt || '');
+				finalResponse = {
+					success: true,
+					summary,
+					executedTasks: result.executedTasks,
+				};
+			} else {
+				finalResponse = {
+					success: result.success,
+					output: result.output,
+					error: result.error,
+					executedTasks: result.executedTasks,
+					failedTask: result.failedTask,
+				};
+			}
+
+			// Send final response
+			res.write(JSON.stringify({ ...finalResponse, isFinal: true }) + STREAM_SEPARATOR);
+			res.end();
+		} catch (error: any) {
+			console.error('Error in executeTasks:', error);
+			const errorResponse = {
+				success: false,
+				error: error.message || 'Unknown error occurred',
+				executedTasks: 0,
+				isFinal: true,
+			};
 			try {
-				// Fetch the workflow
-				const workflow = await workflowFinderService.findWorkflowForUser(
-					task.workflowId,
-					req.user,
-					['workflow:execute'],
-				);
-
-				if (!workflow) {
-					throw new NotFoundError(`Workflow with ID "${task.workflowId}" not found`);
-				}
-
-				// Execute the workflow manually
-				await workflowExecutionService.executeManually(
-					{
-						workflowData: workflow,
-						runData: undefined,
-					},
-					req.user,
-					req.headers['push-ref'],
-				);
-
-				results.executed++;
-			} catch (error: any) {
-				results.failed++;
-				results.success = false;
-				results.errors?.push({
-					workflowId: task.workflowId,
-					error: error.message || 'Unknown error occurred',
-				});
+				res.write(JSON.stringify(errorResponse) + STREAM_SEPARATOR);
+				res.end();
+			} catch (writeError) {
+				console.error('Error writing error response:', writeError);
+				// Response might already be closed, just log it
 			}
 		}
+	}
 
-		return results;
+	private async generateTaskSummary(
+		result: any,
+		tasks: any[],
+		userPrompt: string,
+	): Promise<string> {
+		const apiKey = process.env.OPENROUTER_API_KEY;
+		if (!apiKey) {
+			return 'All tasks completed successfully. No output was generated from the final workflow.';
+		}
+
+		const modelId = process.env.OPENROUTER_MODEL_ID || 'google/gemini-2.5-flash';
+		const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+		try {
+			const systemPrompt =
+				'You are a helpful AI assistant. Provide a brief summary of what was accomplished based on the completed tasks and user prompt.';
+			const userMessage = `User requested: "${userPrompt}"\n\nCompleted tasks:\n${tasks
+				.map((t, i) => `${i + 1}. ${t.task}`)
+				.join('\n')}\n\nProvide a brief summary of what was accomplished.`;
+
+			const response = await fetch(OPENROUTER_URL, {
+				method: 'POST',
+				headers: {
+					'Content-Type': 'application/json',
+					Authorization: `Bearer ${apiKey}`,
+				},
+				body: JSON.stringify({
+					model: modelId,
+					messages: [
+						{ role: 'system', content: systemPrompt },
+						{ role: 'user', content: userMessage },
+					],
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error(`OpenRouter API failed: ${response.status}`);
+			}
+
+			const data = await response.json();
+			return data?.choices?.[0]?.message?.content || 'All tasks completed successfully.';
+		} catch (error) {
+			console.error('Failed to generate summary:', error);
+			return 'All tasks completed successfully. Summary generation failed.';
+		}
 	}
 
 	@Post('/chats')

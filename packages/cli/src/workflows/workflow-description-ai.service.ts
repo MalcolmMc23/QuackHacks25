@@ -238,12 +238,14 @@ Example response format:
 {
   "tasks": [
     {
+  	  "workflowName":"name",
       "workflowId": "workflow-id-1",
       "task": "Description of what this workflow should do",
       "input": "JSON",
       "output": "JSON"
     },
     {
+	  "workflowName":"name",
       "workflowId": "workflow-id-2",
       "task": "Description of what this workflow should do",
       "input": "JSON",
@@ -257,12 +259,14 @@ Example response format:
 {
   "tasks": [
     {
+  	  "workflowName":"name",
       "workflowId": "workflow-id-1",
       "task": "Description of what this workflow should do",
       "input": "JSON",
       "output": "png"
     },
     {
+	 "workflowName":"name",
       "workflowId": "workflow-id-2",
       "task": "Description of what this workflow should do",
       "input": "png",
