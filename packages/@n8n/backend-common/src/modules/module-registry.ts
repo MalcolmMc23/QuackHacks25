@@ -36,6 +36,7 @@ export class ModuleRegistry {
 		'provisioning',
 		'breaking-changes',
 		'mcp',
+		'orchestrator',
 	];
 
 	private readonly activeModules: string[] = [];

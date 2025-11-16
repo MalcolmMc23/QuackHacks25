@@ -41,6 +41,7 @@ const messages = ref<
 
 const rootStore = useRootStore();
 const toast = useToast();
+const currentChatId = ref<string | null>(null);
 
 // Cycle placeholder text when input is inactive
 let placeholderInterval: ReturnType<typeof setInterval> | null = null;
@@ -148,9 +149,10 @@ const sendMessage = async () => {
 					}
 				}
 			},
-			() => {
-				// Stream done
+			async () => {
+				// Stream done - save chat
 				isSending.value = false;
+				await saveCurrentChat();
 			},
 			(error) => {
 				// Stream error
@@ -251,6 +253,42 @@ const handleCancelTasks = () => {
 	});
 };
 
+const saveCurrentChat = async () => {
+	if (messages.value.length === 0) return;
+
+	try {
+		const firstUserMessage = messages.value.find((m) => m.type === 'user');
+		const title = firstUserMessage?.content?.substring(0, 50) || 'New Chat';
+		const response = await makeRestApiRequest<{ id: string; title: string }>(
+			rootStore.restApiContext,
+			'POST',
+			'/orchestration/chats',
+			{
+				chatId: currentChatId.value || undefined,
+				title,
+				messages: messages.value,
+			},
+		);
+		currentChatId.value = response.id;
+	} catch (error) {
+		// Silently fail - chat saving is not critical
+		console.error('Failed to save chat:', error);
+	}
+};
+
+const handleNewChat = async () => {
+	// Save current chat before starting new one
+	if (messages.value.length > 0) {
+		await saveCurrentChat();
+	}
+
+	// Clear messages and reset chat ID
+	messages.value = [];
+	currentChatId.value = null;
+	inputValue.value = '';
+	isActive.value = false;
+};
+
 const hasMessages = computed(() => messages.value.length > 0);
 
 const containerHeight = computed(() => {
@@ -290,6 +328,12 @@ onBeforeUnmount(() => {
 
 <template>
 	<div :class="[$style.pageContainer, { [$style.chatMode]: hasMessages }]">
+		<!-- New Chat Button (only when messages exist) -->
+		<button v-if="hasMessages" :class="$style.newChatButton" @click="handleNewChat">
+			<N8nIcon icon="plus" :size="16" />
+			New Chat
+		</button>
+
 		<!-- Title and Subtitle (only when no messages) -->
 		<div v-if="!hasMessages" :class="$style.titleSection">
 			<h1 :class="$style.title">Agent Hive</h1>
@@ -460,6 +504,36 @@ onBeforeUnmount(() => {
 	color: rgba(255, 255, 255, 0.7);
 	margin-top: var(--spacing--sm);
 	margin-bottom: 0;
+}
+
+.newChatButton {
+	position: fixed;
+	top: var(--spacing--md);
+	right: var(--spacing--md);
+	display: flex;
+	align-items: center;
+	gap: var(--spacing--2xs);
+	padding: var(--spacing--sm) var(--spacing--md);
+	border-radius: var(--radius--small);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	background: rgba(0, 0, 0, 0.4);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	color: rgba(255, 255, 255, 0.9);
+	font-weight: var(--font-weight--medium);
+	font-size: var(--font-size--sm);
+	cursor: pointer;
+	transition: all 0.2s;
+	z-index: 100;
+
+	&:hover {
+		background: rgba(0, 0, 0, 0.6);
+		border-color: rgba(255, 255, 255, 0.25);
+	}
+
+	&:active {
+		background: rgba(0, 0, 0, 0.5);
+	}
 }
 
 .messagesArea {
@@ -664,22 +738,22 @@ onBeforeUnmount(() => {
 	content: '';
 	position: fixed;
 	bottom: 0;
-	left: 50%;
-	transform: translateX(-50%);
+	left: 0;
+	right: 0;
 	width: 100vw;
-	max-width: 1200px;
-	height: 400px;
+	height: 50vh;
 	background: radial-gradient(
-		ellipse 80% 40% at center bottom,
-		rgba(139, 92, 246, 0.7) 0%,
-		rgba(99, 102, 241, 0.5) 15%,
-		rgba(59, 130, 246, 0.4) 30%,
-		rgba(139, 92, 246, 0.2) 50%,
-		transparent 75%
+		ellipse 100% 60% at center bottom,
+		rgba(139, 92, 246, 0.8) 0%,
+		rgba(99, 102, 241, 0.6) 10%,
+		rgba(59, 130, 246, 0.5) 20%,
+		rgba(139, 92, 246, 0.35) 35%,
+		rgba(99, 102, 241, 0.2) 50%,
+		rgba(59, 130, 246, 0.1) 65%,
+		transparent 85%
 	);
 	pointer-events: none;
 	z-index: 0;
-	border-radius: 50% 50% 0 0;
 }
 
 .inputRow {

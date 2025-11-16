@@ -9,6 +9,7 @@ export const MODULE_NAMES = [
 	'data-table',
 	'mcp',
 	'chat-hub',
+	'orchestrator',
 	'provisioning',
 	'breaking-changes',
 ] as const;

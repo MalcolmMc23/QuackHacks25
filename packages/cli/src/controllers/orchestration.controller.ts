@@ -1,4 +1,4 @@
-import { Body, GlobalScope, Post, RestController } from '@n8n/decorators';
+import { Body, GlobalScope, Param, Post, RestController } from '@n8n/decorators';
 import type { AuthenticatedRequest } from '@n8n/db';
 import type { Response } from 'express';
 import { Container } from '@n8n/di';
@@ -11,6 +11,7 @@ import { WorkflowDescriptionAiService } from '@/workflows/workflow-description-a
 import { WorkflowFinderService } from '@/workflows/workflow-finder.service';
 import { WorkflowExecutionService } from '@/workflows/workflow-execution.service';
 import { STREAM_SEPARATOR } from '@/constants';
+import { OrchestratorChatRepository } from './orchestrator-chat.repository';
 
 export type FlushableResponse = Response & { flush: () => void };
 
@@ -37,11 +38,25 @@ type ExecuteTasksResponse = {
 	errors?: Array<{ workflowId: string; error: string }>;
 };
 
+type SaveChatRequest = {
+	chatId?: string;
+	title?: string;
+	messages: Array<{
+		id: string;
+		type: 'user' | 'assistant';
+		content: string;
+		timestamp: Date | string;
+		isTaskList?: boolean;
+		tasks?: Array<{ workflowId: string; task: string }>;
+	}>;
+};
+
 @RestController('/orchestration')
 export class OrchestrationController {
 	constructor(
 		private readonly licenseService: License,
 		private readonly workerStatusService: WorkerStatusService,
+		private readonly orchestratorChatRepository: OrchestratorChatRepository,
 	) {}
 
 	/**
@@ -476,5 +491,102 @@ export class OrchestrationController {
 		}
 
 		return results;
+	}
+
+	@Post('/chats')
+	async saveChat(req: AuthenticatedRequest, @Body body: SaveChatRequest) {
+		const { chatId, title, messages } = body;
+
+		if (!messages || messages.length === 0) {
+			throw new BadRequestError('Messages array is required and must not be empty');
+		}
+
+		// Serialize messages for storage
+		const serializedMessages = messages.map((msg) => ({
+			...msg,
+			timestamp: msg.timestamp instanceof Date ? msg.timestamp.toISOString() : msg.timestamp,
+		}));
+
+		if (chatId) {
+			// Update existing chat
+			const existingChat = await this.orchestratorChatRepository.findOne({
+				where: { id: chatId, userId: req.user.id },
+			});
+
+			if (!existingChat) {
+				throw new NotFoundError(`Chat with ID "${chatId}" not found`);
+			}
+
+			existingChat.messages = serializedMessages;
+			if (title) {
+				existingChat.title = title;
+			}
+
+			await this.orchestratorChatRepository.save(existingChat);
+			return { id: existingChat.id, title: existingChat.title };
+		} else {
+			// Create new chat
+			const newChat = this.orchestratorChatRepository.create({
+				userId: req.user.id,
+				title: title || null,
+				messages: serializedMessages,
+			});
+
+			const savedChat = await this.orchestratorChatRepository.save(newChat);
+			return { id: savedChat.id, title: savedChat.title };
+		}
+	}
+
+	@Post('/chats/list')
+	async listChats(req: AuthenticatedRequest) {
+		const chats = await this.orchestratorChatRepository.find({
+			where: { userId: req.user.id },
+			order: { updatedAt: 'DESC' },
+			select: ['id', 'title', 'createdAt', 'updatedAt'],
+		});
+
+		return chats.map((chat) => ({
+			id: chat.id,
+			title: chat.title || 'New Chat',
+			createdAt: chat.createdAt,
+			updatedAt: chat.updatedAt,
+		}));
+	}
+
+	@Post('/chats/:chatId')
+	async getChat(req: AuthenticatedRequest, @Param('chatId') chatId: string) {
+		const chat = await this.orchestratorChatRepository.findOne({
+			where: { id: chatId, userId: req.user.id },
+		});
+
+		if (!chat) {
+			throw new NotFoundError(`Chat with ID "${chatId}" not found`);
+		}
+
+		// Deserialize messages
+		const messages = chat.messages.map((msg) => ({
+			...msg,
+			timestamp: new Date(msg.timestamp),
+		}));
+
+		return {
+			id: chat.id,
+			title: chat.title,
+			messages,
+		};
+	}
+
+	@Post('/chats/:chatId/delete')
+	async deleteChat(req: AuthenticatedRequest, @Param('chatId') chatId: string) {
+		const chat = await this.orchestratorChatRepository.findOne({
+			where: { id: chatId, userId: req.user.id },
+		});
+
+		if (!chat) {
+			throw new NotFoundError(`Chat with ID "${chatId}" not found`);
+		}
+
+		await this.orchestratorChatRepository.remove(chat);
+		return { success: true };
 	}
 }
