@@ -37,13 +37,41 @@ export class OrchestrationController {
 		_res: Response,
 		@Body body: OrchestratorChatRequest,
 	) {
-		const { userInput, messages } = body ?? {};
+		// Debug logging
+		// eslint-disable-next-line no-console
+		console.log('=== Chat Request Debug ===');
+		// eslint-disable-next-line no-console
+		console.log('Body parameter:', JSON.stringify(body, null, 2));
+		// eslint-disable-next-line no-console
+		console.log('req.body:', JSON.stringify(req.body, null, 2));
+		// eslint-disable-next-line no-console
+		console.log('req.headers:', JSON.stringify(req.headers, null, 2));
+
+		// Try to get data from body parameter first, then req.body
+		const requestBody = (body && Object.keys(body).length > 0 ? body : req.body) as
+			| OrchestratorChatRequest
+			| undefined;
+
+		// eslint-disable-next-line no-console
+		console.log('Using requestBody:', JSON.stringify(requestBody, null, 2));
+
+		const { userInput, messages } = requestBody ?? {};
 
 		const trimmedInput = userInput?.trim() || '';
 		const conversationHistory = messages || [];
 
+		// eslint-disable-next-line no-console
+		console.log(
+			'Parsed - trimmedInput:',
+			trimmedInput,
+			'messages count:',
+			conversationHistory.length,
+		);
+
 		if (!trimmedInput && conversationHistory.length === 0) {
-			throw new BadRequestError('userInput or messages is required');
+			throw new BadRequestError(
+				`userInput or messages is required. Received body: ${JSON.stringify(requestBody)}`,
+			);
 		}
 
 		return await this.chatWithOpenRouter(trimmedInput, conversationHistory);
