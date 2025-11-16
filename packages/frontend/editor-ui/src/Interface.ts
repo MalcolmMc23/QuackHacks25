@@ -273,6 +273,7 @@ export type FolderResource = BaseFolderItem & {
 export type WorkflowResource = BaseResource & {
 	resourceType: 'workflow';
 	description?: string;
+	workflowDescription?: IDataObject;
 	updatedAt: string;
 	createdAt: string;
 	active: boolean;

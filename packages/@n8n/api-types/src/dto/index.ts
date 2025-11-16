@@ -58,6 +58,7 @@ export { GenerateCredentialNameRequestQuery } from './credentials/generate-crede
 
 export { ImportWorkflowFromUrlDto } from './workflows/import-workflow-from-url.dto';
 export { TransferWorkflowBodyDto } from './workflows/transfer.dto';
+export { GenerateWorkflowDescriptionRequestDto } from './workflows/generate-workflow-description-request.dto';
 
 export { CreateOrUpdateTagRequestDto } from './tag/create-or-update-tag-request.dto';
 export { RetrieveTagQueryDto } from './tag/retrieve-tag-query.dto';

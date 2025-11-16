@@ -11,6 +11,7 @@ import type {
 } from 'n8n-workflow';
 
 import type { ListQuery } from '@/requests';
+import type { GenerateWorkflowDescriptionRequestDto } from '@n8n/api-types';
 
 export declare namespace WorkflowRequest {
 	type CreateUpdatePayload = Partial<{
@@ -72,4 +73,10 @@ export declare namespace WorkflowRequest {
 	type ManualRun = AuthenticatedRequest<{ workflowId: string }, {}, ManualRunPayload, {}>;
 
 	type Share = AuthenticatedRequest<{ workflowId: string }, {}, { shareWithIds: string[] }>;
+
+	type GenerateDescription = AuthenticatedRequest<
+		{ workflowId: string },
+		{},
+		GenerateWorkflowDescriptionRequestDto
+	>;
 }

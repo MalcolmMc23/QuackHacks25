@@ -12,6 +12,7 @@ import { useToast } from '@/app/composables/useToast';
 import { getResourcePermissions } from '@n8n/permissions';
 import dateformat from 'dateformat';
 import WorkflowActivator from '@/app/components/WorkflowActivator.vue';
+import WorkflowDescriptionJsonPopover from '@/app/components/WorkflowDescriptionJsonPopover.vue';
 import { useUIStore } from '@/app/stores/ui.store';
 import { useUsersStore } from '@/features/settings/users/users.store';
 import { useWorkflowsStore } from '@/app/stores/workflows.store';
@@ -617,6 +618,13 @@ const tags = computed(
 					:workflow-permissions="workflowPermissions"
 					data-test-id="workflow-card-activator"
 					@update:workflow-active="onWorkflowActiveToggle"
+				/>
+				<WorkflowDescriptionJsonPopover
+					v-if="!data.isArchived"
+					class="mr-s"
+					:workflow-id="data.id"
+					:workflow-description="data.workflowDescription"
+					data-test-id="workflow-card-description-json"
 				/>
 
 				<N8nActionToggle

@@ -1,4 +1,9 @@
-import { ImportWorkflowFromUrlDto, ROLE, TransferWorkflowBodyDto } from '@n8n/api-types';
+import {
+	GenerateWorkflowDescriptionRequestDto,
+	ImportWorkflowFromUrlDto,
+	ROLE,
+	TransferWorkflowBodyDto,
+} from '@n8n/api-types';
 import { Logger } from '@n8n/backend-common';
 import { GlobalConfig } from '@n8n/config';
 import type { Project } from '@n8n/db';
@@ -39,6 +44,7 @@ import { WorkflowHistoryService } from './workflow-history/workflow-history.serv
 import { WorkflowRequest } from './workflow.request';
 import { WorkflowService } from './workflow.service';
 import { EnterpriseWorkflowService } from './workflow.service.ee';
+import { WorkflowDescriptionAiService } from './workflow-description-ai.service';
 import { CredentialsService } from '../credentials/credentials.service';
 
 import { BadRequestError } from '@/errors/response-errors/bad-request.error';
@@ -87,6 +93,7 @@ export class WorkflowsController {
 		private readonly folderService: FolderService,
 		private readonly workflowFinderService: WorkflowFinderService,
 		private readonly executionService: ExecutionService,
+		private readonly workflowDescriptionAiService: WorkflowDescriptionAiService,
 	) {}
 
 	@Post('/')
@@ -403,6 +410,47 @@ export class WorkflowsController {
 		}
 
 		return true;
+	}
+
+	@Post('/:workflowId/generate-description')
+	@ProjectScope('workflow:update')
+	async generateDescription(req: WorkflowRequest.GenerateDescription) {
+		const { workflowId } = req.params;
+		const { userInput } = req.body;
+
+		// Fetch workflow with nodes
+		const workflow = await this.workflowFinderService.findWorkflowForUser(
+			workflowId,
+			req.user,
+			['workflow:update'],
+			{ includeTags: false, includeParentFolder: false },
+		);
+
+		if (!workflow) {
+			throw new NotFoundError(`Workflow with ID "${workflowId}" does not exist`);
+		}
+
+		// Generate description using AI
+		const aiResponse = await this.workflowDescriptionAiService.generateDescription(
+			workflow.nodes,
+			userInput,
+		);
+
+		// Update workflow with AI response
+		const updateData = new WorkflowEntity();
+		updateData.workflowDescription = aiResponse;
+
+		const updatedWorkflow = await this.workflowService.update(
+			req.user,
+			updateData,
+			workflowId,
+			undefined, // tags
+			undefined, // parentFolderId
+			true, // forceSave
+		);
+
+		// Return the AI response
+		return aiResponse;
 	}
 
 	@Post('/:workflowId/archive')

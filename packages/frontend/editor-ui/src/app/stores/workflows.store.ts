@@ -1672,6 +1672,71 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		return updated;
 	}
 
+	async function saveWorkflowDescriptionJson(
+		id: string,
+		workflowDescription: IDataObject | null,
+	): Promise<IWorkflowDb> {
+		let currentVersionId = '';
+		const isCurrentWorkflow = id === workflow.value.id;
+
+		if (isCurrentWorkflow) {
+			currentVersionId = workflow.value.versionId;
+		} else {
+			const cached = workflowsById.value[id];
+			if (cached?.versionId) {
+				currentVersionId = cached.versionId;
+			} else {
+				const fetched = await fetchWorkflow(id);
+				currentVersionId = fetched.versionId;
+			}
+		}
+
+		const updated = await updateWorkflow(id, {
+			versionId: currentVersionId,
+			workflowDescription,
+		});
+
+		// Update local store state
+		if (isCurrentWorkflow) {
+			if (updated.workflowDescription !== undefined) {
+				workflow.value.workflowDescription = updated.workflowDescription;
+			}
+			if (updated.versionId !== currentVersionId) {
+				setWorkflowVersionId(updated.versionId);
+			}
+		} else if (workflowsById.value[id]) {
+			workflowsById.value[id] = {
+				...workflowsById.value[id],
+				workflowDescription: updated.workflowDescription,
+				versionId: updated.versionId,
+			};
+		}
+
+		return updated;
+	}
+
+	async function generateWorkflowDescription(id: string, userInput: string): Promise<IDataObject> {
+		const aiResponse = await makeRestApiRequest<IDataObject>(
+			rootStore.restApiContext,
+			'POST',
+			`/workflows/${id}/generate-description`,
+			{ userInput },
+		);
+
+		// Update local store state with the AI response
+		const isCurrentWorkflow = id === workflow.value.id;
+		if (isCurrentWorkflow) {
+			workflow.value.workflowDescription = aiResponse;
+		} else if (workflowsById.value[id]) {
+			workflowsById.value[id] = {
+				...workflowsById.value[id],
+				workflowDescription: aiResponse,
+			};
+		}
+
+		return aiResponse;
+	}
+
 	async function runWorkflow(startRunData: IStartRunData): Promise<IExecutionPushResponse> {
 		if (startRunData.workflowData.settings === null) {
 			startRunData.workflowData.settings = undefined;
@@ -1951,6 +2016,8 @@ export const useWorkflowsStore = defineStore(STORES.WORKFLOWS, () => {
 		updateWorkflow,
 		updateWorkflowSetting,
 		saveWorkflowDescription,
+		saveWorkflowDescriptionJson,
+		generateWorkflowDescription,
 		runWorkflow,
 		removeTestWebhook,
 		fetchExecutionDataById,
