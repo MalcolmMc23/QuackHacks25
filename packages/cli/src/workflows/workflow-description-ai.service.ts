@@ -58,6 +58,7 @@ export class WorkflowDescriptionAiService {
 
 {
   "outputType": "json",
+  "inputType": "json"
   "workflowName": "Automated HVAC Lead Processing and Notification",
   "description": "This workflow monitors a dedicated Gmail inbox for HVAC-related lead emails, extracts key information, classifies leads as Residential or Commercial, assesses lead quality (cold, warm, hot), and then sends a notification with enriched lead details to a Slack channel.",
   "trigger": {
@@ -103,6 +104,7 @@ export class WorkflowDescriptionAiService {
 }
 
 the outputType can only be, "JSON", "png", or "noOutput"
+the inputType can only be "JSON", "png", or "noInput"
 		
 		`;
 
@@ -228,9 +230,9 @@ IMPORTANT RULES:
 - You do NOT need to create a task for every workflow - only create tasks for workflows that are relevant to the user's prompt
 - However, EVERY task you create MUST reference a valid workflowId from the provided workflows
 - You can have fewer tasks than workflows, but you cannot have more tasks than workflows
-- Each task must reference a unique workflowId (no duplicate workflowIds)
+- if there is not a workflow/workflows that will compleate the users task, you will respond with a empty tasks array: { "tasks": [] }
 
-You will look at the input and outputs of each workflow. Workflow 1 will have a standard input and output. If the workflow before it doesn't have the proper output, it can't go before it. So if workflow 1 has an output of JSON and the input for workflow 2 is also JSON, it will work. If it doesn't match, you will respond with null for that task.
+You will look at the input and outputs of each workflow. each Workflow will have a standard input and output. If the task before it doesn't have the proper output, it can't go before it. So if task 1 has an output of JSON and the input for task 2 is also JSON, it will work. If it doesn't match, you will not be able to chain them together.
 
 Example response format:
 {
@@ -245,6 +247,25 @@ Example response format:
       "workflowId": "workflow-id-2",
       "task": "Description of what this workflow should do",
       "input": "JSON",
+      "output": "JSON"
+    }
+  ]
+}
+
+
+Example response format:
+{
+  "tasks": [
+    {
+      "workflowId": "workflow-id-1",
+      "task": "Description of what this workflow should do",
+      "input": "JSON",
+      "output": "png"
+    },
+    {
+      "workflowId": "workflow-id-2",
+      "task": "Description of what this workflow should do",
+      "input": "png",
       "output": "JSON"
     }
   ]

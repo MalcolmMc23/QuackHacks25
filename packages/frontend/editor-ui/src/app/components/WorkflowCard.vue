@@ -47,6 +47,8 @@ import { useMCPStore } from '@/features/ai/mcpAccess/mcp.store';
 import { useMcp } from '@/features/ai/mcpAccess/composables/useMcp';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { WEBHOOK_NODE_TYPE } from '@/app/constants/nodeTypes';
+import { useWorkflowHelpers } from '@/app/composables/useWorkflowHelpers';
+import { NodeHelpers } from 'n8n-workflow';
 const WORKFLOW_LIST_ITEM_ACTIONS = {
 	OPEN: 'open',
 	SHARE: 'share',
@@ -112,6 +114,7 @@ const projectsStore = useProjectsStore();
 const foldersStore = useFoldersStore();
 const mcpStore = useMCPStore();
 const rootStore = useRootStore();
+const workflowHelpers = useWorkflowHelpers();
 
 const hiddenBreadcrumbsItemsAsync = ref<Promise<PathItem[]>>(new Promise(() => {}));
 const cachedHiddenBreadcrumbsItems = ref<PathItem[]>([]);
@@ -504,8 +507,17 @@ const tags = computed(
 
 async function runWebhook() {
 	try {
-		console.log('[WorkflowCard] Starting workflow execution for:', props.data.id);
+		console.log('[WorkflowCard] Starting webhook call for:', props.data.id);
 		console.log('[WorkflowCard] Workflow active state:', props.data.active);
+
+		// Check if workflow is active
+		if (!props.data.active) {
+			toast.showError(
+				new Error('Workflow must be active to call its webhook'),
+				'Workflow not active',
+			);
+			return;
+		}
 
 		// Fetch the full workflow data first
 		const workflow = await workflowsStore.fetchWorkflow(props.data.id);
@@ -523,30 +535,149 @@ async function runWebhook() {
 		// Get the first webhook node
 		const webhookNode = webhookNodes[0];
 		console.log('[WorkflowCard] Webhook node:', webhookNode.name);
+		console.log('[WorkflowCard] Webhook node webhookId:', webhookNode.webhookId);
 
-		// Execute the workflow directly by triggering from the webhook node
-		console.log('[WorkflowCard] Executing workflow from webhook trigger...');
+		// Get webhook path and HTTP method from node parameters
+		const webhookPath = webhookNode.parameters?.path as string;
+		const httpMethod = (webhookNode.parameters?.httpMethod as string) || 'GET';
+		const isFullPath = (webhookNode.parameters?.options?.isFullPath as boolean) || false;
 
-		// Convert tags to strings if they are ITag objects
-		const workflowData = {
-			...workflow,
-			tags: workflow.tags?.map((tag) => (typeof tag === 'string' ? tag : tag.id)),
-		};
+		if (!webhookPath) {
+			toast.showError(new Error('Webhook path is not configured'), 'Invalid webhook configuration');
+			return;
+		}
 
-		// Run the workflow starting from the webhook trigger node
-		await workflowsStore.runWorkflow({
-			workflowData,
-			startNodes: [webhookNode.name],
+		// Require JSON input for POST requests
+		let jsonData = {};
+		if (httpMethod === 'POST' || httpMethod === 'PUT' || httpMethod === 'PATCH') {
+			// Prompt user for JSON input
+			const promptResult = await message.prompt(
+				'Enter JSON for Webhook',
+				'This webhook requires JSON input. Please enter the JSON data to send:',
+				{
+					type: 'input',
+					inputType: 'textarea',
+					inputPlaceholder: '{"prompt": "Generate a video script about..."}',
+					confirmButtonText: 'Send',
+					cancelButtonText: 'Cancel',
+				},
+			);
+
+			// Check if user cancelled
+			if (promptResult.action === 'cancel' || !promptResult.value) {
+				return; // User cancelled, exit silently
+			}
+
+			const jsonInput = promptResult.value;
+
+			// Validate JSON input is not empty
+			if (!jsonInput || typeof jsonInput !== 'string' || jsonInput.trim() === '') {
+				toast.showError(new Error('JSON input is required for this webhook'), 'JSON Required');
+				return;
+			}
+
+			// Parse and validate JSON
+			try {
+				jsonData = JSON.parse(jsonInput);
+			} catch (error) {
+				toast.showError(new Error('Invalid JSON format. Please check your input.'), 'Invalid JSON');
+				return;
+			}
+		}
+
+		// Build the webhook URL
+		// For production webhooks, use the production webhook base URL
+		const baseUrl = rootStore.webhookUrl; // This is the production webhook base URL
+
+		// When webhookId exists, the registered path in the database is typically just the path parameter
+		// not webhookId/path. So we need to construct the URL differently.
+		// If webhookId exists and path doesn't contain dynamic segments, use just the path
+		let finalWebhookPath = webhookPath;
+
+		// Check if path has dynamic segments (contains ':')
+		const hasDynamicSegments = webhookPath.includes(':');
+
+		if (webhookNode.webhookId && !hasDynamicSegments && !isFullPath) {
+			// For static paths with webhookId, the registered path is typically just the path itself
+			// The webhookId is used for matching but not in the URL path
+			finalWebhookPath = webhookPath;
+		} else {
+			// Use the standard path construction
+			finalWebhookPath = NodeHelpers.getNodeWebhookPath(
+				props.data.id,
+				webhookNode,
+				webhookPath,
+				isFullPath,
+			);
+		}
+
+		const webhookUrl = `${baseUrl}/${finalWebhookPath}`;
+
+		// Remove any double slashes
+		const cleanWebhookUrl = webhookUrl.replace(/([^:]\/)\/+/g, '$1');
+
+		console.log('[WorkflowCard] Constructed webhook URL:', cleanWebhookUrl);
+		console.log('[WorkflowCard] HTTP Method:', httpMethod);
+		console.log('[WorkflowCard] JSON Payload:', jsonData);
+
+		// Make the HTTP request to the webhook
+		const response = await fetch(cleanWebhookUrl, {
+			method: httpMethod,
+			headers: {
+				'Content-Type': 'application/json',
+			},
+			// Send JSON body for POST/PUT/PATCH methods
+			...(httpMethod !== 'GET' && httpMethod !== 'HEAD' ? { body: JSON.stringify(jsonData) } : {}),
 		});
 
-		console.log('[WorkflowCard] Workflow execution started successfully');
+		// Get response data
+		const responseText = await response.text();
+		let responseData;
+		try {
+			responseData = JSON.parse(responseText);
+		} catch {
+			responseData = responseText;
+		}
+
+		// Log the response to console
+		console.log('[WorkflowCard] Webhook Response:', {
+			status: response.status,
+			statusText: response.statusText,
+			headers: Object.fromEntries(response.headers.entries()),
+			body: responseData,
+		});
+		console.log('[WorkflowCard] Raw response text:', responseText);
+
+		// Handle error responses with helpful messages
+		if (!response.ok) {
+			const errorMessage = responseData?.message || responseData || response.statusText;
+
+			// Check for common workflow configuration errors
+			if (errorMessage.includes('Unused Respond to Webhook node')) {
+				toast.showError(
+					new Error(
+						'Workflow Configuration Error: Your webhook node needs to be set to "Using Respond to Webhook Node" instead of "When Last Node Finishes". Please update the webhook node settings in your workflow.',
+					),
+					'Webhook Configuration Error',
+				);
+			} else {
+				toast.showError(
+					new Error(`Webhook returned error: ${errorMessage}`),
+					`Webhook Error (${response.status})`,
+				);
+			}
+			return;
+		}
+
+		// Show success toast
 		toast.showMessage({
-			title: 'Workflow executed successfully',
+			title: 'Webhook called successfully',
+			message: `Status: ${response.status} ${response.statusText}`,
 			type: 'success',
 		});
 	} catch (error) {
-		console.error('[WorkflowCard] Failed to execute workflow:', error);
-		toast.showError(error, 'Failed to execute workflow');
+		console.error('[WorkflowCard] Failed to call webhook:', error);
+		toast.showError(error, 'Failed to call webhook');
 	}
 }
 </script>
