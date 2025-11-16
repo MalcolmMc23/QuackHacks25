@@ -1,10 +1,11 @@
 <script lang="ts" setup>
-import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue';
+import { ref, computed, watch, onBeforeUnmount } from 'vue';
 import { onClickOutside } from '@vueuse/core';
 import { N8nIcon } from '@n8n/design-system';
-import { makeRestApiRequest } from '@n8n/rest-api-client';
+import { makeRestApiRequest, streamRequest } from '@n8n/rest-api-client';
 import { useRootStore } from '@n8n/stores/useRootStore';
 import { useToast } from '@/app/composables/useToast';
+import VueMarkdown from 'vue-markdown-render';
 
 const PLACEHOLDERS = [
 	'Generate website with HextaUI',
@@ -17,23 +18,26 @@ const PLACEHOLDERS = [
 
 type OrchestratorChatResponse = {
 	content: string;
+	isTaskList?: boolean;
+	tasks?: Array<{ workflowId: string; task: string }>;
 };
-
-interface Message {
-	id: string;
-	type: 'user' | 'assistant';
-	content: string;
-	timestamp: Date;
-}
 
 const placeholderIndex = ref(0);
 const showPlaceholder = ref(true);
 const isActive = ref(false);
 const inputValue = ref('');
 const wrapperRef = ref<HTMLDivElement | null>(null);
-const messagesRef = ref<HTMLDivElement | null>(null);
-const messages = ref<Message[]>([]);
 const isSending = ref(false);
+const messages = ref<
+	Array<{
+		id: string;
+		type: 'user' | 'assistant';
+		content: string;
+		timestamp: Date;
+		isTaskList?: boolean;
+		tasks?: Array<{ workflowId: string; task: string }>;
+	}>
+>([]);
 
 const rootStore = useRootStore();
 const toast = useToast();
@@ -44,7 +48,7 @@ let placeholderInterval: ReturnType<typeof setInterval> | null = null;
 watch(
 	[isActive, inputValue],
 	() => {
-		if (isActive.value || inputValue.value || messages.value.length > 0) {
+		if (isActive.value || inputValue.value) {
 			if (placeholderInterval) {
 				clearInterval(placeholderInterval);
 				placeholderInterval = null;
@@ -63,9 +67,9 @@ watch(
 	{ immediate: true },
 );
 
-// Close input when clicking outside (only if no messages)
+// Close input when clicking outside (only if no input value)
 onClickOutside(wrapperRef, () => {
-	if (!inputValue.value && messages.value.length === 0) {
+	if (!inputValue.value) {
 		isActive.value = false;
 	}
 });
@@ -74,40 +78,12 @@ const handleActivate = () => {
 	isActive.value = true;
 };
 
-const hasMessages = computed(() => messages.value.length > 0);
-
-const containerHeight = computed(() => {
-	if (hasMessages.value) {
-		return 'auto';
-	}
-	return isActive.value || inputValue.value ? 128 : 68;
-});
-
-const containerShadow = computed(() => {
-	if (hasMessages.value) {
-		return '0 2px 8px 0 rgba(0,0,0,0.08)';
-	}
-	return isActive.value || inputValue.value
-		? '0 8px 32px 0 rgba(0,0,0,0.16)'
-		: '0 2px 8px 0 rgba(0,0,0,0.08)';
-});
-
-const containerStyle = computed(() => {
-	const height = containerHeight.value;
-	return {
-		height: typeof height === 'string' ? height : `${height}px`,
-		boxShadow: containerShadow.value,
-	};
-});
-
-const sendButtonDisabled = computed(() => isSending.value || !inputValue.value.trim());
-
 const sendMessage = async () => {
-	if (sendButtonDisabled.value) return;
+	if (isSending.value || !inputValue.value.trim()) return;
 
-	const userMessage: Message = {
+	const userMessage = {
 		id: Date.now().toString(),
-		type: 'user',
+		type: 'user' as const,
 		content: inputValue.value.trim(),
 		timestamp: new Date(),
 	};
@@ -116,10 +92,6 @@ const sendMessage = async () => {
 	const currentInput = inputValue.value.trim();
 	inputValue.value = '';
 	isActive.value = false;
-
-	// Scroll to bottom
-	await nextTick();
-	scrollToBottom();
 
 	try {
 		isSending.value = true;
@@ -132,53 +104,77 @@ const sendMessage = async () => {
 				content: msg.content,
 			}));
 
-		// Debug: Log what we're sending
-		const requestPayload = {
-			userInput: currentInput,
-			messages: conversationHistory,
-		};
-		// eslint-disable-next-line no-console
-		console.log('Sending request payload:', JSON.stringify(requestPayload, null, 2));
-
-		const response = await makeRestApiRequest<OrchestratorChatResponse>(
-			rootStore.restApiContext,
-			'POST',
-			'/orchestration/chat',
-			requestPayload,
-		);
-
-		// eslint-disable-next-line no-console
-		console.log('Received response:', response);
-
-		const assistantMessage: Message = {
-			id: (Date.now() + 1).toString(),
-			type: 'assistant',
-			content: response.content || 'No response received.',
+		// Create assistant message placeholder for streaming
+		const assistantMessageId = (Date.now() + 1).toString();
+		const assistantMessage = {
+			id: assistantMessageId,
+			type: 'assistant' as const,
+			content: '',
 			timestamp: new Date(),
+			isTaskList: false,
+			tasks: [] as Array<{ workflowId: string; task: string }>,
 		};
-
 		messages.value.push(assistantMessage);
-		await nextTick();
-		scrollToBottom();
+
+		// Stream the response
+		await streamRequest<{
+			content?: string;
+			chunk?: string;
+			isTaskList?: boolean;
+			tasks?: Array<{ workflowId: string; task: string }>;
+		}>(
+			rootStore.restApiContext,
+			'/orchestration/chat/stream',
+			{
+				userInput: currentInput,
+				messages: conversationHistory,
+			},
+			(chunk) => {
+				// Update the assistant message with streaming content
+				const messageIndex = messages.value.findIndex((m) => m.id === assistantMessageId);
+				if (messageIndex !== -1) {
+					if (chunk.chunk) {
+						// Streaming chunk
+						messages.value[messageIndex].content += chunk.chunk;
+					} else if (chunk.content) {
+						// Full content update
+						messages.value[messageIndex].content = chunk.content;
+					}
+					if (chunk.isTaskList !== undefined) {
+						messages.value[messageIndex].isTaskList = chunk.isTaskList;
+					}
+					if (chunk.tasks) {
+						messages.value[messageIndex].tasks = chunk.tasks;
+					}
+				}
+			},
+			() => {
+				// Stream done
+				isSending.value = false;
+			},
+			(error) => {
+				// Stream error
+				isSending.value = false;
+				toast.showError(error, 'Orchestrator error', 'Failed to contact the orchestrator.');
+				const messageIndex = messages.value.findIndex((m) => m.id === assistantMessageId);
+				if (messageIndex !== -1) {
+					messages.value[messageIndex].content =
+						'Something went wrong while contacting the orchestrator.';
+				}
+			},
+		);
 	} catch (error) {
+		isSending.value = false;
 		toast.showError(error, 'Orchestrator error', 'Failed to contact the orchestrator.');
-		const errorMessage: Message = {
+		const errorMessage = {
 			id: (Date.now() + 2).toString(),
-			type: 'assistant',
+			type: 'assistant' as const,
 			content: 'Something went wrong while contacting the orchestrator.',
 			timestamp: new Date(),
+			isTaskList: false,
+			tasks: [],
 		};
 		messages.value.push(errorMessage);
-		await nextTick();
-		scrollToBottom();
-	} finally {
-		isSending.value = false;
-	}
-};
-
-const scrollToBottom = () => {
-	if (messagesRef.value) {
-		messagesRef.value.scrollTop = messagesRef.value.scrollHeight;
 	}
 };
 
@@ -189,6 +185,102 @@ const handleKeyPress = (e: KeyboardEvent) => {
 	}
 };
 
+const handleRunTasks = async (tasks: Array<{ workflowId: string; task: string }>) => {
+	// Validate tasks array
+	if (!tasks || !Array.isArray(tasks) || tasks.length === 0) {
+		toast.showError(
+			new Error('No tasks available to execute'),
+			'Task execution error',
+			'Please ensure tasks are available before running.',
+		);
+		return;
+	}
+
+	// Filter out any invalid tasks
+	const validTasks = tasks.filter(
+		(task) =>
+			task &&
+			task.workflowId &&
+			typeof task.workflowId === 'string' &&
+			task.workflowId.trim() !== '',
+	);
+
+	if (validTasks.length === 0) {
+		toast.showError(
+			new Error('No valid tasks found'),
+			'Task execution error',
+			'All tasks are invalid or missing workflow IDs.',
+		);
+		return;
+	}
+
+	try {
+		const response = await makeRestApiRequest<{
+			success: boolean;
+			executed: number;
+			failed: number;
+			errors?: Array<{ workflowId: string; error: string }>;
+		}>(rootStore.restApiContext, 'POST', '/orchestration/execute-tasks', { tasks: validTasks });
+
+		if (response.success && response.executed > 0) {
+			toast.showMessage({
+				title: 'Tasks executed',
+				message: `Successfully executed ${response.executed} task(s)${response.failed > 0 ? `. ${response.failed} failed.` : '.'}`,
+				type: 'success',
+			});
+		} else if (response.failed > 0) {
+			const errorMessages =
+				response.errors?.map((e) => `${e.workflowId}: ${e.error}`).join(', ') || 'Unknown error';
+			toast.showError(
+				new Error(`Failed to execute tasks: ${errorMessages}`),
+				'Task execution failed',
+				`Failed to execute ${response.failed} task(s).`,
+			);
+		}
+	} catch (error) {
+		toast.showError(error, 'Task execution error', 'Failed to execute tasks.');
+	}
+};
+
+const handleCancelTasks = () => {
+	// Just acknowledge - no action needed for cancel
+	toast.showMessage({
+		title: 'Cancelled',
+		message: 'Task execution cancelled.',
+		type: 'info',
+	});
+};
+
+const hasMessages = computed(() => messages.value.length > 0);
+
+const containerHeight = computed(() => {
+	if (hasMessages.value) {
+		return 'auto';
+	}
+	return isActive.value || inputValue.value ? 128 : 68;
+});
+
+const containerShadow = computed(() => {
+	return isActive.value || inputValue.value
+		? '0 8px 32px 0 rgba(0,0,0,0.16)'
+		: '0 2px 8px 0 rgba(0,0,0,0.08)';
+});
+
+const containerStyle = computed(() => {
+	const height = containerHeight.value;
+	const isChatMode = hasMessages.value;
+	return {
+		height: typeof height === 'string' ? height : `${height}px`,
+		boxShadow: containerShadow.value,
+		transform: isChatMode ? 'translateY(0)' : 'none',
+		transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)',
+		position: 'relative',
+		zIndex: 10,
+	};
+});
+
+const sendButtonDisabled = computed(() => isSending.value || !inputValue.value.trim());
+
 onBeforeUnmount(() => {
 	if (placeholderInterval) {
 		clearInterval(placeholderInterval);
@@ -198,8 +290,14 @@ onBeforeUnmount(() => {
 
 <template>
 	<div :class="[$style.pageContainer, { [$style.chatMode]: hasMessages }]">
+		<!-- Title and Subtitle (only when no messages) -->
+		<div v-if="!hasMessages" :class="$style.titleSection">
+			<h1 :class="$style.title">Agent Hive</h1>
+			<p :class="$style.subtitle">Create your own opportunities</p>
+		</div>
+
 		<!-- Messages Area -->
-		<div v-if="hasMessages" ref="messagesRef" :class="$style.messagesArea">
+		<div v-if="hasMessages" :class="$style.messagesArea">
 			<div :class="$style.messagesContent">
 				<div
 					v-for="message in messages"
@@ -210,7 +308,19 @@ onBeforeUnmount(() => {
 					]"
 				>
 					<div v-if="message.type === 'assistant'" :class="$style.assistantMessageContent">
-						<div :class="$style.messageText">{{ message.content }}</div>
+						<div :class="$style.messageText">
+							<VueMarkdown :source="message.content" />
+						</div>
+						<div
+							v-if="message.isTaskList && message.tasks && message.tasks.length > 0"
+							:class="$style.taskActions"
+						>
+							<button :class="$style.runButton" @click="handleRunTasks(message.tasks)">
+								<N8nIcon icon="play" :size="16" />
+								Run
+							</button>
+							<button :class="$style.cancelButton" @click="handleCancelTasks">Cancel</button>
+						</div>
 					</div>
 					<div v-else :class="$style.userMessageContent">
 						{{ message.content }}
@@ -300,11 +410,18 @@ onBeforeUnmount(() => {
 	min-height: 100vh;
 	display: flex;
 	justify-content: center;
-	align-items: center;
+	align-items: flex-end;
 	color: var(--color--foreground--shade-1);
-	background-color: var(--color--background--light-2);
+	background: linear-gradient(to bottom, #0a0a0f 0%, #1a1a2e 50%, #0f0f1e 100%);
 	padding: var(--spacing--2xl);
-	transition: padding 0.3s ease;
+	padding-bottom: 20vh;
+	transition:
+		padding 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		flex-direction 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		justify-content 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		align-items 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+	position: relative;
+	overflow: hidden;
 }
 
 .pageContainer.chatMode {
@@ -312,9 +429,37 @@ onBeforeUnmount(() => {
 	justify-content: flex-start;
 	align-items: stretch;
 	padding: 0;
-	background-color: var(--color--background--light-2);
+	background: linear-gradient(to bottom, #0a0a0f 0%, #1a1a2e 50%, #0f0f1e 100%);
 	height: 100vh;
 	overflow: hidden;
+	position: relative;
+}
+
+.titleSection {
+	position: absolute;
+	top: 40%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	text-align: center;
+	z-index: 1;
+	pointer-events: none;
+	width: 100%;
+	padding: 0 var(--spacing--lg);
+}
+
+.title {
+	font-size: 2.5rem;
+	font-weight: 600;
+	color: rgba(255, 255, 255, 0.95);
+	margin: 0;
+	text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.subtitle {
+	font-size: 1rem;
+	color: rgba(255, 255, 255, 0.7);
+	margin-top: var(--spacing--sm);
+	margin-bottom: 0;
 }
 
 .messagesArea {
@@ -322,12 +467,23 @@ onBeforeUnmount(() => {
 	overflow-y: auto;
 	overflow-x: hidden;
 	padding: var(--spacing--xl) var(--spacing--lg);
+	padding-bottom: 200px;
 	display: flex;
 	flex-direction: column;
 	max-width: 768px;
 	width: 100%;
 	margin: 0 auto;
 	min-height: 0;
+	opacity: 0;
+	transform: translateY(20px);
+	animation: fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes fadeInUp {
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .messagesContent {
@@ -340,6 +496,16 @@ onBeforeUnmount(() => {
 .messageWrapper {
 	display: flex;
 	width: 100%;
+	opacity: 0;
+	transform: translateY(10px);
+	animation: messageFadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+
+@keyframes messageFadeIn {
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .assistantMessage {
@@ -358,16 +524,96 @@ onBeforeUnmount(() => {
 }
 
 .messageText {
-	color: var(--color--text);
+	color: rgba(255, 255, 255, 0.9);
 	font-size: var(--font-size--base);
 	line-height: 1.6;
 	word-wrap: break-word;
-	white-space: pre-wrap;
+
+	:global(p) {
+		margin: var(--spacing--xs) 0;
+	}
+
+	:global(strong) {
+		font-weight: var(--font-weight--bold);
+	}
+
+	:global(em) {
+		font-style: italic;
+		color: var(--color--text--tint-1);
+	}
+
+	:global(ul),
+	:global(ol) {
+		margin: var(--spacing--xs) 0;
+		padding-left: var(--spacing--lg);
+	}
+
+	:global(li) {
+		margin: var(--spacing--2xs) 0;
+	}
+}
+
+.taskActions {
+	display: flex;
+	gap: var(--spacing--sm);
+	margin-top: var(--spacing--md);
+	padding-top: var(--spacing--md);
+	border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.runButton {
+	display: flex;
+	align-items: center;
+	gap: var(--spacing--2xs);
+	padding: var(--spacing--sm) var(--spacing--md);
+	border-radius: var(--radius--small);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	background-color: rgba(255, 255, 255, 0.15);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	color: rgba(255, 255, 255, 0.95);
+	font-weight: var(--font-weight--medium);
+	font-size: var(--font-size--sm);
+	cursor: pointer;
+	transition: all 0.2s;
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.25);
+		border-color: rgba(255, 255, 255, 0.3);
+	}
+
+	&:active {
+		background-color: rgba(255, 255, 255, 0.2);
+	}
+}
+
+.cancelButton {
+	padding: var(--spacing--sm) var(--spacing--md);
+	border-radius: var(--radius--small);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	background-color: transparent;
+	color: rgba(255, 255, 255, 0.8);
+	font-weight: var(--font-weight--medium);
+	font-size: var(--font-size--sm);
+	cursor: pointer;
+	transition: all 0.2s;
+
+	&:hover {
+		background-color: rgba(255, 255, 255, 0.1);
+		border-color: rgba(255, 255, 255, 0.25);
+		color: rgba(255, 255, 255, 0.95);
+	}
+
+	&:active {
+		background-color: rgba(255, 255, 255, 0.15);
+	}
 }
 
 .userMessageContent {
-	background-color: var(--color--primary);
-	color: var(--color--foreground--tint-2);
+	background-color: rgba(255, 255, 255, 0.15);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	color: rgba(255, 255, 255, 0.95);
 	padding: var(--spacing--sm) var(--spacing--md);
 	border-radius: 9999px;
 	font-size: var(--font-size--base);
@@ -375,32 +621,65 @@ onBeforeUnmount(() => {
 	max-width: 85%;
 	word-wrap: break-word;
 	white-space: pre-wrap;
+	border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .container {
 	width: 100%;
 	max-width: 768px;
 	border-radius: 32px;
-	background: var(--color--foreground--tint-2);
-	overflow: hidden;
+	background: transparent;
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+	border: none;
+	overflow: visible;
 	display: flex;
 	flex-direction: column;
+	position: relative;
 	transition:
-		height 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-		box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-		max-width 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-		border-radius 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+		height 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		max-width 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		border-radius 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+		transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .container.chatInputContainer {
 	max-width: 100%;
 	border-radius: 0;
-	margin: 0 auto;
-	border-top: 1px solid var(--color--foreground--tint-1);
+	margin: 0;
+	border: none;
 	background: transparent;
 	box-shadow: none;
 	padding: var(--spacing--md);
-	padding-bottom: var(--spacing--sm);
+	padding-bottom: var(--spacing--lg);
+	position: fixed;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	transition: padding 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pageContainer::after {
+	content: '';
+	position: fixed;
+	bottom: 0;
+	left: 50%;
+	transform: translateX(-50%);
+	width: 100vw;
+	max-width: 1200px;
+	height: 400px;
+	background: radial-gradient(
+		ellipse 80% 40% at center bottom,
+		rgba(139, 92, 246, 0.7) 0%,
+		rgba(99, 102, 241, 0.5) 15%,
+		rgba(59, 130, 246, 0.4) 30%,
+		rgba(139, 92, 246, 0.2) 50%,
+		transparent 75%
+	);
+	pointer-events: none;
+	z-index: 0;
+	border-radius: 50% 50% 0 0;
 }
 
 .inputRow {
@@ -409,18 +688,27 @@ onBeforeUnmount(() => {
 	gap: var(--spacing--2xs);
 	padding: var(--spacing--sm) var(--spacing--md);
 	border-radius: 9999px;
-	background: var(--color--foreground--tint-2);
+	background: rgba(0, 0, 0, 0.6);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	max-width: 768px;
 	width: 100%;
 	margin: 0 auto;
+	position: relative;
+	z-index: 10;
 }
 
 .container.chatInputContainer .inputRow {
-	background: var(--color--background--light-1);
-	border: 1px solid var(--color--foreground--tint-1);
+	background: rgba(0, 0, 0, 0.4);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	border: 1px solid rgba(255, 255, 255, 0.1);
 	border-radius: 24px;
 	padding: var(--spacing--xs) var(--spacing--sm);
 	max-width: 768px;
+	position: relative;
+	z-index: 10;
 }
 
 .container.chatInputContainer .input {
@@ -433,39 +721,49 @@ onBeforeUnmount(() => {
 	border: none;
 	background: transparent;
 	cursor: pointer;
-	transition: background-color 0.2s;
+	transition: all 0.2s;
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--color--text);
+	color: rgba(255, 255, 255, 0.7);
 
 	&:hover {
-		background-color: var(--color--background--light-1);
+		background-color: rgba(255, 255, 255, 0.1);
+		color: rgba(255, 255, 255, 0.9);
 	}
 }
 
 .sendButton {
-	background-color: var(--color--foreground--shade-1);
-	color: var(--color--foreground--tint-2);
+	background-color: rgba(255, 255, 255, 0.2);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	color: rgba(255, 255, 255, 0.95);
 	font-weight: var(--font-weight--medium);
 	justify-content: center;
+	border: 1px solid rgba(255, 255, 255, 0.2);
 
 	&:hover:not(:disabled) {
-		background-color: var(--color--foreground--shade-2);
+		background-color: rgba(255, 255, 255, 0.3);
+		border-color: rgba(255, 255, 255, 0.3);
 	}
 
 	&:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+		background-color: rgba(255, 255, 255, 0.1);
 	}
 }
 
 .container.chatInputContainer .sendButton {
-	background-color: var(--color--primary);
-	color: var(--color--foreground--tint-2);
+	background-color: rgba(255, 255, 255, 0.2);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	color: rgba(255, 255, 255, 0.95);
+	border: 1px solid rgba(255, 255, 255, 0.2);
 
 	&:hover:not(:disabled) {
-		background-color: var(--color--primary--shade-1);
+		background-color: rgba(255, 255, 255, 0.3);
+		border-color: rgba(255, 255, 255, 0.3);
 	}
 }
 
@@ -486,10 +784,10 @@ onBeforeUnmount(() => {
 	font-weight: var(--font-weight--regular);
 	position: relative;
 	z-index: 1;
-	color: var(--color--text);
+	color: rgba(255, 255, 255, 0.9);
 
 	&::placeholder {
-		color: var(--color--text--tint-1);
+		color: rgba(255, 255, 255, 0.5);
 	}
 }
 
@@ -510,7 +808,7 @@ onBeforeUnmount(() => {
 	left: 0;
 	top: 50%;
 	transform: translateY(-50%);
-	color: var(--color--text--tint-1);
+	color: rgba(255, 255, 255, 0.5);
 	user-select: none;
 	pointer-events: none;
 	z-index: 0;
