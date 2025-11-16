@@ -34,7 +34,6 @@ import type { PathItem } from '@n8n/design-system/components/N8nBreadcrumbs/Brea
 import { useFoldersStore } from '@/features/core/folders/folders.store';
 
 import {
-	N8nActionToggle,
 	N8nBadge,
 	N8nBreadcrumbs,
 	N8nCard,
@@ -818,13 +817,6 @@ async function runWebhook() {
 				>
 					Run
 				</button>
-
-				<N8nActionToggle
-					:actions="actions"
-					theme="dark"
-					data-test-id="workflow-card-actions"
-					@action="onAction"
-				/>
 			</div>
 		</template>
 	</N8nCard>
@@ -915,22 +907,28 @@ async function runWebhook() {
 }
 
 .runButton {
-	background-color: #ff6b35;
-	color: white;
-	border: none;
+	background: rgba(255, 255, 255, 0.15);
+	backdrop-filter: blur(10px);
+	-webkit-backdrop-filter: blur(10px);
+	border: 1px solid rgba(255, 255, 255, 0.3);
+	color: rgba(255, 255, 255, 0.95);
 	border-radius: var(--radius);
 	padding: var(--spacing--2xs) var(--spacing--sm);
 	font-size: var(--font-size--sm);
 	font-weight: var(--font-weight--bold);
 	cursor: pointer;
-	transition: background-color 0.2s ease;
+	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
 	&:hover {
-		background-color: #ff5722;
+		background: rgba(255, 255, 255, 0.25);
+		border-color: rgba(255, 255, 255, 0.4);
+		transform: translateY(-1px);
+		box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
 	}
 
 	&:active {
-		background-color: #e64a19;
+		background: rgba(255, 255, 255, 0.2);
+		transform: translateY(0);
 	}
 }
 

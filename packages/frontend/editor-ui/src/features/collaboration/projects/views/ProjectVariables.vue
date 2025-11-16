@@ -33,8 +33,6 @@ import {
 import { useAsyncState } from '@vueuse/core';
 import pickBy from 'lodash/pickBy';
 import type { ComponentExposed } from 'vue-component-type-helpers';
-import { useInsightsStore } from '@/features/execution/insights/insights.store';
-import InsightsSummary from '@/features/execution/insights/components/InsightsSummary.vue';
 import { useEnvironmentsStore } from '@/features/settings/environments.ee/environments.store';
 import type { EnvironmentVariable } from '@/features/settings/environments.ee/environments.types';
 import VariablesUsageBadge from '@/features/settings/environments.ee/components/VariablesUsageBadge.vue';
@@ -55,7 +53,6 @@ const message = useMessage();
 const sourceControlStore = useSourceControlStore();
 const route = useRoute();
 const router = useRouter();
-const insightsStore = useInsightsStore();
 const overview = useProjectPages();
 const projectsStore = useProjectsStore();
 
@@ -314,14 +311,7 @@ onMounted(() => {
 		@click:add="openCreateVariableModal"
 	>
 		<template #header>
-			<ProjectHeader main-button="variable">
-				<InsightsSummary
-					v-if="overview.isOverviewSubPage && insightsStore.isSummaryEnabled"
-					:loading="insightsStore.weeklySummary.isLoading"
-					:summary="insightsStore.weeklySummary.state"
-					time-range="week"
-				/>
-			</ProjectHeader>
+			<ProjectHeader main-button="variable" />
 		</template>
 		<template #filters="{ setKeyValue }">
 			<div class="mb-s">

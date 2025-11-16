@@ -709,9 +709,8 @@ const fetchWorkflows = async () => {
 
 		workflowsAndFolders.value = fetchedResources;
 
-		// Toggle ownership cards visibility only after we have fetched the workflows
-		showCardsBadge.value =
-			projectPages.isOverviewSubPage || projectPages.isSharedSubPage || filters.value.search !== '';
+		// Ownership badges are disabled
+		showCardsBadge.value = false;
 
 		return fetchedResources;
 	} catch (error) {
@@ -1867,576 +1866,792 @@ const onNameSubmit = async (name: string) => {
 </script>
 
 <template>
-	<SimplifiedEmptyLayout v-if="shouldUseSimplifiedLayout" @click:add="addWorkflow" />
+	<div class="workflows-view-container">
+		<SimplifiedEmptyLayout v-if="shouldUseSimplifiedLayout" @click:add="addWorkflow" />
 
-	<ResourcesListLayout
-		v-else
-		ref="resourcesListLayout"
-		v-model:filters="filters"
-		resource-key="workflows"
-		type="list-paginated"
-		:resources="workflowListResources"
-		:type-props="{ itemSize: 80 }"
-		:shareable="isShareable"
-		:initialize="initialize"
-		:disabled="readOnlyEnv || !projectPermissions.workflow.create"
-		:loading="false"
-		:resources-refreshing="loading"
-		:custom-page-size="DEFAULT_WORKFLOW_PAGE_SIZE"
-		:total-items="workflowsStore.totalWorkflowCount"
-		:dont-perform-sorting-and-filtering="true"
-		:has-empty-state="foldersStore.totalWorkflowCount === 0 && !currentFolderId"
-		@click:add="addWorkflow"
-		@update:search="onSearchUpdated"
-		@update:filters="onFiltersUpdated"
-		@update:pagination-and-sort="setPaginationAndSort"
-		@mouseleave="folderHelpers.resetDropTarget"
-	>
-		<template #header>
-			<ProjectHeader
-				:has-active-callouts="hasActiveCallouts"
-				@create-folder="createFolderInCurrent"
-			>
-				<InsightsSummary
-					v-if="showInsights"
-					:loading="insightsStore.weeklySummary.isLoading"
-					:summary="insightsStore.weeklySummary.state"
-					time-range="week"
+		<ResourcesListLayout
+			v-else
+			ref="resourcesListLayout"
+			v-model:filters="filters"
+			resource-key="workflows"
+			type="list-paginated"
+			:resources="workflowListResources"
+			:type-props="{ itemSize: 80 }"
+			:shareable="isShareable"
+			:initialize="initialize"
+			:disabled="readOnlyEnv || !projectPermissions.workflow.create"
+			:loading="false"
+			:resources-refreshing="loading"
+			:custom-page-size="DEFAULT_WORKFLOW_PAGE_SIZE"
+			:total-items="workflowsStore.totalWorkflowCount"
+			:dont-perform-sorting-and-filtering="true"
+			:has-empty-state="foldersStore.totalWorkflowCount === 0 && !currentFolderId"
+			@click:add="addWorkflow"
+			@update:search="onSearchUpdated"
+			@update:filters="onFiltersUpdated"
+			@update:pagination-and-sort="setPaginationAndSort"
+			@mouseleave="folderHelpers.resetDropTarget"
+		>
+			<template #header>
+				<ProjectHeader
+					:has-active-callouts="hasActiveCallouts"
+					@create-folder="createFolderInCurrent"
 				/>
-			</ProjectHeader>
-		</template>
-		<template v-if="foldersEnabled || showRegisteredCommunityCTA" #add-button>
-			<N8nTooltip
-				placement="top"
-				:disabled="
-					!(
-						projectPages.isOverviewSubPage ||
-						projectPages.isSharedSubPage ||
-						(!readOnlyEnv && hasPermissionToCreateFolders)
-					)
-				"
-			>
-				<template #content>
-					<span
-						v-if="
-							(projectPages.isOverviewSubPage || projectPages.isSharedSubPage) &&
-							!showRegisteredCommunityCTA
-						"
-					>
-						<span v-if="teamProjectsEnabled">
-							{{ i18n.baseText('folders.add.overview.withProjects.message') }}
+			</template>
+			<template v-if="foldersEnabled || showRegisteredCommunityCTA" #add-button>
+				<N8nTooltip
+					placement="top"
+					:disabled="
+						!(
+							projectPages.isOverviewSubPage ||
+							projectPages.isSharedSubPage ||
+							(!readOnlyEnv && hasPermissionToCreateFolders)
+						)
+					"
+				>
+					<template #content>
+						<span
+							v-if="
+								(projectPages.isOverviewSubPage || projectPages.isSharedSubPage) &&
+								!showRegisteredCommunityCTA
+							"
+						>
+							<span v-if="teamProjectsEnabled">
+								{{ i18n.baseText('folders.add.overview.withProjects.message') }}
+							</span>
+							<span v-else>
+								{{ i18n.baseText('folders.add.overview.community.message') }}
+							</span>
 						</span>
 						<span v-else>
-							{{ i18n.baseText('folders.add.overview.community.message') }}
+							{{
+								currentParentName
+									? i18n.baseText('folders.add.to.parent.message', {
+											interpolate: { parent: currentParentName },
+										})
+									: i18n.baseText('folders.add.here.message')
+							}}
 						</span>
-					</span>
-					<span v-else>
-						{{
-							currentParentName
-								? i18n.baseText('folders.add.to.parent.message', {
-										interpolate: { parent: currentParentName },
-									})
-								: i18n.baseText('folders.add.here.message')
-						}}
-					</span>
-				</template>
-				<N8nButton
-					size="small"
-					icon="folder-plus"
-					type="tertiary"
-					data-test-id="add-folder-button"
-					:class="$style['add-folder-button']"
-					:disabled="!showRegisteredCommunityCTA && (readOnlyEnv || !hasPermissionToCreateFolders)"
-					@click="createFolderInCurrent"
-				/>
-			</N8nTooltip>
-		</template>
-		<template #callout>
-			<N8nCallout
-				v-if="showPrebuiltAgentsCallout"
-				theme="secondary"
-				icon="bot"
-				icon-size="large"
-				:class="$style['easy-ai-workflow-callout']"
-			>
-				<N8nText size="small">
-					{{ i18n.baseText('workflows.preBuiltAgents.callout') }}
-					{{ ' ' }}
-					<N8nLink
-						theme="secondary"
-						size="small"
-						:bold="true"
-						:underline="true"
-						@click="openPrebuiltAgentsModal('workflowsEmptyState')"
-					>
-						{{ i18n.baseText('workflows.preBuiltAgents.linkText') }}
-					</N8nLink>
-				</N8nText>
-				<template #trailingContent>
-					<div :class="$style['callout-trailing-content']">
-						<N8nIcon
-							size="small"
-							icon="x"
-							:title="i18n.baseText('generic.dismiss')"
-							class="clickable"
-							@click="dismissPreBuiltAgentsCallout()"
-						/>
-					</div>
-				</template>
-			</N8nCallout>
-			<N8nCallout
-				v-else-if="showAIStarterCollectionCallout"
-				theme="secondary"
-				icon="gift"
-				:class="$style['easy-ai-workflow-callout']"
-			>
-				{{ i18n.baseText('workflows.ai.starter.collection.callout') }}
-				<template #trailingContent>
-					<div :class="$style['callout-trailing-content']">
-						<N8nButton
-							data-test-id="easy-ai-button"
-							size="small"
-							type="secondary"
-							@click="createAIStarterWorkflows('callout')"
-						>
-							{{ i18n.baseText('generic.startNow') }}
-						</N8nButton>
-						<N8nIcon
-							size="small"
-							icon="x"
-							:title="i18n.baseText('generic.dismiss')"
-							class="clickable"
-							@click="dismissStarterCollectionCallout"
-						/>
-					</div>
-				</template>
-			</N8nCallout>
-			<SuggestedWorkflows v-else-if="showPersonalizedTemplates">
-				<SuggestedWorkflowCard
-					v-for="workflow in personalizedTemplatesStore.suggestedWorkflows"
-					:key="workflow.id"
-					data-test-id="resource-list-item-suggested-workflow"
-					:data="{
-						id: workflow.id,
-						name: workflow.name,
-					}"
-				/>
-			</SuggestedWorkflows>
-			<N8nCallout
-				v-if="showReadyToRunWorkflowsCallout"
-				theme="secondary"
-				icon="bolt-filled"
-				:class="$style['easy-ai-workflow-callout']"
-			>
-				{{ readyToRunWorkflowsStore.getCalloutText() }}
-				<template #trailingContent>
-					<div :class="$style['callout-trailing-content']">
-						<N8nButton
-							data-test-id="easy-ai-button"
-							size="small"
-							type="secondary"
-							@click="handleCreateReadyToRunWorkflows('callout')"
-						>
-							{{ i18n.baseText('generic.startNow') }}
-						</N8nButton>
-						<N8nIcon
-							size="small"
-							icon="x"
-							:title="i18n.baseText('generic.dismiss')"
-							class="clickable"
-							@click="handleDismissReadyToRunCallout"
-						/>
-					</div>
-				</template>
-			</N8nCallout>
-		</template>
-		<template #breadcrumbs>
-			<div v-if="breadcrumbsLoading" :class="$style['breadcrumbs-loading']">
-				<N8nLoading :loading="breadcrumbsLoading" :rows="1" variant="p" />
-			</div>
-			<div
-				v-else-if="showFolders && currentFolder"
-				:class="$style['breadcrumbs-container']"
-				data-test-id="main-breadcrumbs"
-			>
-				<FolderBreadcrumbs
-					:current-folder="currentFolderParent"
-					:actions="mainBreadcrumbsActions"
-					:hidden-items-trigger="isDragging ? 'hover' : 'click'"
-					:current-folder-as-link="true"
-					@item-selected="onBreadcrumbItemClick"
-					@action="onBreadCrumbsAction"
-					@item-drop="onBreadCrumbsItemDrop"
-					@project-drop="moveFolderToProjectRoot"
-				>
-					<template #append>
-						<span :class="$style['path-separator']">/</span>
-						<N8nInlineTextEdit
-							ref="renameInput"
-							:key="currentFolder?.id"
-							data-test-id="breadcrumbs-item-current"
-							:placeholder="i18n.baseText('folders.rename.placeholder')"
-							:model-value="currentFolder.name"
-							:max-length="30"
-							:read-only="readOnlyEnv || !hasPermissionToUpdateFolders"
-							:class="{ [$style.name]: true, [$style['pointer-disabled']]: isDragging }"
-							@update:model-value="onNameSubmit"
-						/>
 					</template>
-				</FolderBreadcrumbs>
-			</div>
-		</template>
-		<template #item="{ item: data, index }">
-			<Draggable
-				v-if="(data as FolderResource | WorkflowResource).resourceType === 'folder'"
-				:key="`folder-${index}`"
-				:disabled="!isDragNDropEnabled"
-				type="move"
-				target-data-key="folder"
-				@dragstart="folderHelpers.onDragStart"
-				@dragend="folderHelpers.onDragEnd"
-			>
-				<template #preview>
-					<N8nCard>
-						<N8nText tag="h2" bold>
-							{{ (data as FolderResource).name }}
-						</N8nText>
-					</N8nCard>
-				</template>
-				<FolderCard
-					:data="data as FolderResource"
-					:actions="folderCardActions"
-					:read-only="
-						readOnlyEnv || (!hasPermissionToDeleteFolders && !hasPermissionToCreateFolders)
-					"
-					:personal-project="personalProject"
-					:data-resourceid="(data as FolderResource).id"
-					:data-resourcename="(data as FolderResource).name"
-					:class="{
-						['mb-2xs']: true,
-						[$style['drag-active']]: isDragging,
-						[$style.dragging]:
-							foldersStore.draggedElement?.type === 'folder' &&
-							foldersStore.draggedElement?.id === (data as FolderResource).id,
-						[$style['drop-active']]:
-							foldersStore.activeDropTarget?.id === (data as FolderResource).id,
-					}"
-					:show-ownership-badge="showCardsBadge"
-					data-target="folder"
-					class="mb-2xs"
-					@action="onFolderCardAction"
-					@mouseenter="folderHelpers.onDragEnter"
-					@mouseup="onFolderCardDrop"
-				/>
-			</Draggable>
-			<Draggable
-				v-else
-				:key="`workflow-${index}`"
-				:disabled="!isDragNDropEnabled"
-				type="move"
-				target-data-key="workflow"
-				@dragstart="folderHelpers.onDragStart"
-				@dragend="folderHelpers.onDragEnd"
-			>
-				<template #preview>
-					<N8nCard>
-						<N8nText tag="h2" bold>
-							{{ (data as WorkflowResource).name }}
-						</N8nText>
-					</N8nCard>
-				</template>
-				<WorkflowCard
-					data-test-id="resources-list-item-workflow"
-					data-target="workflow"
-					:class="{
-						['mb-2xs']: true,
-						[$style['drag-active']]: isDragging,
-						[$style.dragging]:
-							foldersStore.draggedElement?.type === 'workflow' &&
-							foldersStore.draggedElement?.id === (data as WorkflowResource).id,
-					}"
-					:data="data as WorkflowResource"
-					:workflow-list-event-bus="workflowListEventBus"
-					:read-only="readOnlyEnv"
-					:data-resourceid="(data as WorkflowResource).id"
-					:data-resourcename="(data as WorkflowResource).name"
-					:show-ownership-badge="showCardsBadge"
-					:are-folders-enabled="settingsStore.isFoldersFeatureEnabled"
-					:are-tags-enabled="settingsStore.areTagsEnabled"
-					:is-mcp-enabled="mcpEnabled"
-					@click:tag="onClickTag"
-					@workflow:deleted="refreshWorkflows"
-					@workflow:archived="refreshWorkflows"
-					@workflow:unarchived="refreshWorkflows"
-					@workflow:moved="fetchWorkflows"
-					@workflow:duplicated="fetchWorkflows"
-					@workflow:active-toggle="onWorkflowActiveToggle"
-					@action:move-to-folder="moveWorkflowToFolder"
-					@mouseenter="isDragging ? folderHelpers.resetDropTarget() : {}"
-				/>
-			</Draggable>
-		</template>
-		<template #empty>
-			<EmptySharedSectionActionBox
-				v-if="projectPages.isSharedSubPage && personalProject"
-				:personal-project="personalProject"
-				resource-type="workflows"
-			/>
-			<div v-else>
-				<div class="text-center mt-s" data-test-id="list-empty-state">
-					<N8nHeading tag="h2" size="xlarge" class="mb-2xs">
-						{{
-							currentUser.firstName
-								? i18n.baseText('workflows.empty.heading', {
-										interpolate: { name: currentUser.firstName },
-									})
-								: i18n.baseText('workflows.empty.heading.userNotSetup')
-						}}
-					</N8nHeading>
-					<N8nText size="large" color="text-base">
-						{{ emptyListDescription }}
+					<N8nButton
+						size="small"
+						icon="folder-plus"
+						type="tertiary"
+						data-test-id="add-folder-button"
+						:class="$style['add-folder-button']"
+						:disabled="
+							!showRegisteredCommunityCTA && (readOnlyEnv || !hasPermissionToCreateFolders)
+						"
+						@click="createFolderInCurrent"
+					/>
+				</N8nTooltip>
+			</template>
+			<template #callout>
+				<N8nCallout
+					v-if="showPrebuiltAgentsCallout"
+					theme="secondary"
+					icon="bot"
+					icon-size="large"
+					:class="$style['easy-ai-workflow-callout']"
+				>
+					<N8nText size="small">
+						{{ i18n.baseText('workflows.preBuiltAgents.callout') }}
+						{{ ' ' }}
+						<N8nLink
+							theme="secondary"
+							size="small"
+							:bold="true"
+							:underline="true"
+							@click="openPrebuiltAgentsModal('workflowsEmptyState')"
+						>
+							{{ i18n.baseText('workflows.preBuiltAgents.linkText') }}
+						</N8nLink>
 					</N8nText>
+					<template #trailingContent>
+						<div :class="$style['callout-trailing-content']">
+							<N8nIcon
+								size="small"
+								icon="x"
+								:title="i18n.baseText('generic.dismiss')"
+								class="clickable"
+								@click="dismissPreBuiltAgentsCallout()"
+							/>
+						</div>
+					</template>
+				</N8nCallout>
+				<N8nCallout
+					v-else-if="showAIStarterCollectionCallout"
+					theme="secondary"
+					icon="gift"
+					:class="$style['easy-ai-workflow-callout']"
+				>
+					{{ i18n.baseText('workflows.ai.starter.collection.callout') }}
+					<template #trailingContent>
+						<div :class="$style['callout-trailing-content']">
+							<N8nButton
+								data-test-id="easy-ai-button"
+								size="small"
+								type="secondary"
+								@click="createAIStarterWorkflows('callout')"
+							>
+								{{ i18n.baseText('generic.startNow') }}
+							</N8nButton>
+							<N8nIcon
+								size="small"
+								icon="x"
+								:title="i18n.baseText('generic.dismiss')"
+								class="clickable"
+								@click="dismissStarterCollectionCallout"
+							/>
+						</div>
+					</template>
+				</N8nCallout>
+				<SuggestedWorkflows v-else-if="showPersonalizedTemplates">
+					<SuggestedWorkflowCard
+						v-for="workflow in personalizedTemplatesStore.suggestedWorkflows"
+						:key="workflow.id"
+						data-test-id="resource-list-item-suggested-workflow"
+						:data="{
+							id: workflow.id,
+							name: workflow.name,
+						}"
+					/>
+				</SuggestedWorkflows>
+				<N8nCallout
+					v-if="showReadyToRunWorkflowsCallout"
+					theme="secondary"
+					icon="bolt-filled"
+					:class="$style['easy-ai-workflow-callout']"
+				>
+					{{ readyToRunWorkflowsStore.getCalloutText() }}
+					<template #trailingContent>
+						<div :class="$style['callout-trailing-content']">
+							<N8nButton
+								data-test-id="easy-ai-button"
+								size="small"
+								type="secondary"
+								@click="handleCreateReadyToRunWorkflows('callout')"
+							>
+								{{ i18n.baseText('generic.startNow') }}
+							</N8nButton>
+							<N8nIcon
+								size="small"
+								icon="x"
+								:title="i18n.baseText('generic.dismiss')"
+								class="clickable"
+								@click="handleDismissReadyToRunCallout"
+							/>
+						</div>
+					</template>
+				</N8nCallout>
+			</template>
+			<template #breadcrumbs>
+				<div v-if="breadcrumbsLoading" :class="$style['breadcrumbs-loading']">
+					<N8nLoading :loading="breadcrumbsLoading" :rows="1" variant="p" />
 				</div>
 				<div
-					v-if="!readOnlyEnv && projectPermissions.workflow.create"
-					:class="['text-center', 'mt-2xl', $style.actionsContainer]"
+					v-else-if="showFolders && currentFolder"
+					:class="$style['breadcrumbs-container']"
+					data-test-id="main-breadcrumbs"
 				>
-					<N8nCard
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="new-workflow-card"
-						@click="addWorkflow"
+					<FolderBreadcrumbs
+						:current-folder="currentFolderParent"
+						:actions="mainBreadcrumbsActions"
+						:hidden-items-trigger="isDragging ? 'hover' : 'click'"
+						:current-folder-as-link="true"
+						@item-selected="onBreadcrumbItemClick"
+						@action="onBreadCrumbsAction"
+						@item-drop="onBreadCrumbsItemDrop"
+						@project-drop="moveFolderToProjectRoot"
 					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								icon="file"
-								color="foreground-dark"
-								:stroke-width="1.5"
+						<template #append>
+							<span :class="$style['path-separator']">/</span>
+							<N8nInlineTextEdit
+								ref="renameInput"
+								:key="currentFolder?.id"
+								data-test-id="breadcrumbs-item-current"
+								:placeholder="i18n.baseText('folders.rename.placeholder')"
+								:model-value="currentFolder.name"
+								:max-length="30"
+								:read-only="readOnlyEnv || !hasPermissionToUpdateFolders"
+								:class="{ [$style.name]: true, [$style['pointer-disabled']]: isDragging }"
+								@update:model-value="onNameSubmit"
 							/>
-							<N8nText size="large" class="mt-xs">
-								{{ i18n.baseText('workflows.empty.startFromScratch') }}
-							</N8nText>
-						</div>
-					</N8nCard>
-					<N8nCard
-						v-if="showPrebuiltAgentsCallout"
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="prebuilt-agents-card"
-						@click="openPrebuiltAgentsModal('workflowsList')"
-					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								:stroke-width="1.5"
-								icon="bot"
-								color="foreground-dark"
-							/>
-							<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
-								{{ i18n.baseText('workflows.empty.preBuiltAgents') }}
-							</N8nText>
-						</div>
-					</N8nCard>
-					<N8nCard
-						v-else-if="showAIStarterCollectionCallout"
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="easy-ai-workflow-card"
-						@click="createAIStarterWorkflows('card')"
-					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								:stroke-width="1.5"
-								icon="gift"
-								color="foreground-dark"
-							/>
-							<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
-								{{ i18n.baseText('workflows.ai.starter.collection.card') }}
-							</N8nText>
-						</div>
-					</N8nCard>
-					<N8nCard
-						v-else-if="showEasyAIWorkflowCallout"
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="easy-ai-workflow-card"
-						@click="openAIWorkflow('empty')"
-					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								:stroke-width="1.5"
-								icon="bot"
-								color="foreground-dark"
-							/>
-							<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
-								{{ i18n.baseText('workflows.empty.easyAI') }}
-							</N8nText>
-						</div>
-					</N8nCard>
-					<N8nCard
-						v-if="showReadyToRunWorkflowsCallout"
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="ready-to-run-workflows-card"
-						@click="handleCreateReadyToRunWorkflows('card')"
-					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								:stroke-width="1.5"
-								icon="package-open"
-								color="foreground-dark"
-							/>
-							<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
-								{{ readyToRunWorkflowsStore.getCardText() }}
-							</N8nText>
-						</div>
-					</N8nCard>
-					<N8nCard
-						v-if="templatesCardEnabled"
-						:class="$style.emptyStateCard"
-						hoverable
-						data-test-id="new-workflow-from-template-card"
-						@click="openTemplatesRepository"
-					>
-						<div :class="$style.emptyStateCardContent">
-							<N8nIcon
-								:class="$style.emptyStateCardIcon"
-								:stroke-width="1.5"
-								icon="package-open"
-								color="foreground-dark"
-							/>
-							<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
-								{{ i18n.baseText('workflows.empty.startWithTemplate') }}
-							</N8nText>
-						</div>
-					</N8nCard>
+						</template>
+					</FolderBreadcrumbs>
 				</div>
-				<TemplateRecommendationV3 v-if="showTemplateRecommendationV3" />
-				<TemplateRecommendationV2 v-else-if="showTemplateRecommendationV2" />
-			</div>
-		</template>
-		<template #filters="{ setKeyValue }">
-			<div v-if="settingsStore.areTagsEnabled" class="mb-s">
-				<N8nInputLabel
-					:label="i18n.baseText('workflows.filters.tags')"
-					:bold="false"
-					size="small"
-					color="text-base"
-					class="mb-3xs"
-				/>
-				<WorkflowTagsDropdown
-					:placeholder="i18n.baseText('workflowOpen.filterWorkflows')"
-					:model-value="filters.tags"
-					:create-enabled="false"
-					@update:model-value="setKeyValue('tags', $event)"
-				/>
-			</div>
-			<div class="mb-s">
-				<N8nInputLabel
-					:label="i18n.baseText('workflows.filters.status')"
-					:bold="false"
-					size="small"
-					color="text-base"
-					class="mb-3xs"
-				/>
-				<N8nSelect
-					data-test-id="status-dropdown"
-					:model-value="filters.status"
-					@update:model-value="setKeyValue('status', $event)"
+			</template>
+			<template #item="{ item: data, index }">
+				<Draggable
+					v-if="(data as FolderResource | WorkflowResource).resourceType === 'folder'"
+					:key="`folder-${index}`"
+					:disabled="!isDragNDropEnabled"
+					type="move"
+					target-data-key="folder"
+					@dragstart="folderHelpers.onDragStart"
+					@dragend="folderHelpers.onDragEnd"
 				>
-					<N8nOption
-						v-for="option in statusFilterOptions"
-						:key="option.label"
-						:label="option.label"
-						:value="option.value"
-						data-test-id="status"
-					>
-					</N8nOption>
-				</N8nSelect>
-			</div>
-			<div class="mb-s">
-				<N8nCheckbox
-					:label="i18n.baseText('workflows.filters.showArchived')"
-					:model-value="filters.showArchived || false"
-					data-test-id="show-archived-checkbox"
-					@update:model-value="setKeyValue('showArchived', $event)"
-				/>
-			</div>
-		</template>
-		<template #postamble>
-			<!-- Empty states for shared section and folders -->
-			<div
-				v-if="workflowsAndFolders.length === 0 && !hasFilters"
-				:class="$style['empty-folder-container']"
-				data-test-id="empty-folder-container"
-			>
-				<N8nInfoTip v-if="showArchivedOnlyHint" :bold="false">
-					{{ i18n.baseText('workflows.archivedOnly.hint') }}
-					<N8nLink size="small" data-test-id="show-archived-link" @click="onShowArchived">
-						{{ i18n.baseText('workflows.archivedOnly.hint.link') }}
-					</N8nLink>
-				</N8nInfoTip>
+					<template #preview>
+						<N8nCard>
+							<N8nText tag="h2" bold>
+								{{ (data as FolderResource).name }}
+							</N8nText>
+						</N8nCard>
+					</template>
+					<FolderCard
+						:data="data as FolderResource"
+						:actions="folderCardActions"
+						:read-only="
+							readOnlyEnv || (!hasPermissionToDeleteFolders && !hasPermissionToCreateFolders)
+						"
+						:personal-project="personalProject"
+						:data-resourceid="(data as FolderResource).id"
+						:data-resourcename="(data as FolderResource).name"
+						:class="{
+							['mb-2xs']: true,
+							[$style['drag-active']]: isDragging,
+							[$style.dragging]:
+								foldersStore.draggedElement?.type === 'folder' &&
+								foldersStore.draggedElement?.id === (data as FolderResource).id,
+							[$style['drop-active']]:
+								foldersStore.activeDropTarget?.id === (data as FolderResource).id,
+						}"
+						:show-ownership-badge="showCardsBadge"
+						data-target="folder"
+						class="mb-2xs"
+						@action="onFolderCardAction"
+						@mouseenter="folderHelpers.onDragEnter"
+						@mouseup="onFolderCardDrop"
+					/>
+				</Draggable>
+				<Draggable
+					v-else
+					:key="`workflow-${index}`"
+					:disabled="!isDragNDropEnabled"
+					type="move"
+					target-data-key="workflow"
+					@dragstart="folderHelpers.onDragStart"
+					@dragend="folderHelpers.onDragEnd"
+				>
+					<template #preview>
+						<N8nCard>
+							<N8nText tag="h2" bold>
+								{{ (data as WorkflowResource).name }}
+							</N8nText>
+						</N8nCard>
+					</template>
+					<WorkflowCard
+						data-test-id="resources-list-item-workflow"
+						data-target="workflow"
+						:class="{
+							['mb-2xs']: true,
+							[$style['drag-active']]: isDragging,
+							[$style.dragging]:
+								foldersStore.draggedElement?.type === 'workflow' &&
+								foldersStore.draggedElement?.id === (data as WorkflowResource).id,
+						}"
+						:data="data as WorkflowResource"
+						:workflow-list-event-bus="workflowListEventBus"
+						:read-only="readOnlyEnv"
+						:data-resourceid="(data as WorkflowResource).id"
+						:data-resourcename="(data as WorkflowResource).name"
+						:show-ownership-badge="false"
+						:are-folders-enabled="settingsStore.isFoldersFeatureEnabled"
+						:are-tags-enabled="settingsStore.areTagsEnabled"
+						:is-mcp-enabled="mcpEnabled"
+						@click:tag="onClickTag"
+						@workflow:deleted="refreshWorkflows"
+						@workflow:archived="refreshWorkflows"
+						@workflow:unarchived="refreshWorkflows"
+						@workflow:moved="fetchWorkflows"
+						@workflow:duplicated="fetchWorkflows"
+						@workflow:active-toggle="onWorkflowActiveToggle"
+						@action:move-to-folder="moveWorkflowToFolder"
+						@mouseenter="isDragging ? folderHelpers.resetDropTarget() : {}"
+					/>
+				</Draggable>
+			</template>
+			<template #empty>
 				<EmptySharedSectionActionBox
 					v-if="projectPages.isSharedSubPage && personalProject"
 					:personal-project="personalProject"
 					resource-type="workflows"
 				/>
-				<N8nActionBox
-					v-else-if="currentFolder"
-					data-test-id="empty-folder-action-box"
-					:heading="
-						i18n.baseText('folders.empty.actionbox.title', {
-							interpolate: { folderName: currentFolder.name },
-						})
-					"
-					:button-text="i18n.baseText('generic.create.workflow')"
-					button-type="secondary"
-					:button-disabled="readOnlyEnv || !projectPermissions.workflow.create"
-					@click:button="onCreateWorkflowClick"
+				<div v-else>
+					<div class="text-center mt-s" data-test-id="list-empty-state">
+						<N8nHeading tag="h2" size="xlarge" class="mb-2xs">
+							{{
+								currentUser.firstName
+									? i18n.baseText('workflows.empty.heading', {
+											interpolate: { name: currentUser.firstName },
+										})
+									: i18n.baseText('workflows.empty.heading.userNotSetup')
+							}}
+						</N8nHeading>
+						<N8nText size="large" color="text-base">
+							{{ emptyListDescription }}
+						</N8nText>
+					</div>
+					<div
+						v-if="!readOnlyEnv && projectPermissions.workflow.create"
+						:class="['text-center', 'mt-2xl', $style.actionsContainer]"
+					>
+						<N8nCard
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="new-workflow-card"
+							@click="addWorkflow"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									icon="file"
+									color="foreground-dark"
+									:stroke-width="1.5"
+								/>
+								<N8nText size="large" class="mt-xs">
+									{{ i18n.baseText('workflows.empty.startFromScratch') }}
+								</N8nText>
+							</div>
+						</N8nCard>
+						<N8nCard
+							v-if="showPrebuiltAgentsCallout"
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="prebuilt-agents-card"
+							@click="openPrebuiltAgentsModal('workflowsList')"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									:stroke-width="1.5"
+									icon="bot"
+									color="foreground-dark"
+								/>
+								<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
+									{{ i18n.baseText('workflows.empty.preBuiltAgents') }}
+								</N8nText>
+							</div>
+						</N8nCard>
+						<N8nCard
+							v-else-if="showAIStarterCollectionCallout"
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="easy-ai-workflow-card"
+							@click="createAIStarterWorkflows('card')"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									:stroke-width="1.5"
+									icon="gift"
+									color="foreground-dark"
+								/>
+								<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
+									{{ i18n.baseText('workflows.ai.starter.collection.card') }}
+								</N8nText>
+							</div>
+						</N8nCard>
+						<N8nCard
+							v-else-if="showEasyAIWorkflowCallout"
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="easy-ai-workflow-card"
+							@click="openAIWorkflow('empty')"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									:stroke-width="1.5"
+									icon="bot"
+									color="foreground-dark"
+								/>
+								<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
+									{{ i18n.baseText('workflows.empty.easyAI') }}
+								</N8nText>
+							</div>
+						</N8nCard>
+						<N8nCard
+							v-if="showReadyToRunWorkflowsCallout"
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="ready-to-run-workflows-card"
+							@click="handleCreateReadyToRunWorkflows('card')"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									:stroke-width="1.5"
+									icon="package-open"
+									color="foreground-dark"
+								/>
+								<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
+									{{ readyToRunWorkflowsStore.getCardText() }}
+								</N8nText>
+							</div>
+						</N8nCard>
+						<N8nCard
+							v-if="templatesCardEnabled"
+							:class="$style.emptyStateCard"
+							hoverable
+							data-test-id="new-workflow-from-template-card"
+							@click="openTemplatesRepository"
+						>
+							<div :class="$style.emptyStateCardContent">
+								<N8nIcon
+									:class="$style.emptyStateCardIcon"
+									:stroke-width="1.5"
+									icon="package-open"
+									color="foreground-dark"
+								/>
+								<N8nText size="large" class="mt-xs pl-2xs pr-2xs">
+									{{ i18n.baseText('workflows.empty.startWithTemplate') }}
+								</N8nText>
+							</div>
+						</N8nCard>
+					</div>
+					<TemplateRecommendationV3 v-if="showTemplateRecommendationV3" />
+					<TemplateRecommendationV2 v-else-if="showTemplateRecommendationV2" />
+				</div>
+			</template>
+			<template #filters="{ setKeyValue }">
+				<div v-if="settingsStore.areTagsEnabled" class="mb-s">
+					<N8nInputLabel
+						:label="i18n.baseText('workflows.filters.tags')"
+						:bold="false"
+						size="small"
+						color="text-base"
+						class="mb-3xs"
+					/>
+					<WorkflowTagsDropdown
+						:placeholder="i18n.baseText('workflowOpen.filterWorkflows')"
+						:model-value="filters.tags"
+						:create-enabled="false"
+						@update:model-value="setKeyValue('tags', $event)"
+					/>
+				</div>
+				<div class="mb-s">
+					<N8nInputLabel
+						:label="i18n.baseText('workflows.filters.status')"
+						:bold="false"
+						size="small"
+						color="text-base"
+						class="mb-3xs"
+					/>
+					<N8nSelect
+						data-test-id="status-dropdown"
+						:model-value="filters.status"
+						@update:model-value="setKeyValue('status', $event)"
+					>
+						<N8nOption
+							v-for="option in statusFilterOptions"
+							:key="option.label"
+							:label="option.label"
+							:value="option.value"
+							data-test-id="status"
+						>
+						</N8nOption>
+					</N8nSelect>
+				</div>
+				<div class="mb-s">
+					<N8nCheckbox
+						:label="i18n.baseText('workflows.filters.showArchived')"
+						:model-value="filters.showArchived || false"
+						data-test-id="show-archived-checkbox"
+						@update:model-value="setKeyValue('showArchived', $event)"
+					/>
+				</div>
+			</template>
+			<template #postamble>
+				<!-- Empty states for shared section and folders -->
+				<div
+					v-if="workflowsAndFolders.length === 0 && !hasFilters"
+					:class="$style['empty-folder-container']"
+					data-test-id="empty-folder-container"
 				>
-					<template #disabledButtonTooltip>
-						{{
-							readOnlyEnv
-								? i18n.baseText('readOnlyEnv.cantAdd.workflow')
-								: i18n.baseText('generic.missing.permissions')
-						}}
-					</template></N8nActionBox
-				>
-			</div>
-		</template>
-	</ResourcesListLayout>
-	<div :class="$style.fixedButtonsContainer">
-		<N8nButton
-			:class="$style.fixedButton"
-			type="primary"
-			size="large"
-			data-test-id="fixed-bottom-right-button"
-			@click="router.push('/orchestrator')"
-		>
-			Button
-		</N8nButton>
-		<N8nButton
-			:class="$style.fixedButton"
-			type="secondary"
-			size="large"
-			:loading="testingWebhook"
-			:disabled="testingWebhook"
-			data-test-id="webhook-test-button"
-			@click="testTaskmaster"
-		>
-			{{ testingWebhook ? 'Testing...' : 'Test Webhook' }}
-		</N8nButton>
+					<N8nInfoTip v-if="showArchivedOnlyHint" :bold="false">
+						{{ i18n.baseText('workflows.archivedOnly.hint') }}
+						<N8nLink size="small" data-test-id="show-archived-link" @click="onShowArchived">
+							{{ i18n.baseText('workflows.archivedOnly.hint.link') }}
+						</N8nLink>
+					</N8nInfoTip>
+					<EmptySharedSectionActionBox
+						v-if="projectPages.isSharedSubPage && personalProject"
+						:personal-project="personalProject"
+						resource-type="workflows"
+					/>
+					<N8nActionBox
+						v-else-if="currentFolder"
+						data-test-id="empty-folder-action-box"
+						:heading="
+							i18n.baseText('folders.empty.actionbox.title', {
+								interpolate: { folderName: currentFolder.name },
+							})
+						"
+						:button-text="i18n.baseText('generic.create.workflow')"
+						button-type="secondary"
+						:button-disabled="readOnlyEnv || !projectPermissions.workflow.create"
+						@click:button="onCreateWorkflowClick"
+					>
+						<template #disabledButtonTooltip>
+							{{
+								readOnlyEnv
+									? i18n.baseText('readOnlyEnv.cantAdd.workflow')
+									: i18n.baseText('generic.missing.permissions')
+							}}
+						</template></N8nActionBox
+					>
+				</div>
+			</template>
+		</ResourcesListLayout>
+		<div :class="$style.fixedButtonsContainer">
+			<N8nButton
+				:class="$style.fixedButton"
+				type="primary"
+				size="large"
+				data-test-id="fixed-bottom-right-button"
+				@click="router.push('/orchestrator')"
+			>
+				Button
+			</N8nButton>
+			<N8nButton
+				:class="$style.fixedButton"
+				type="secondary"
+				size="large"
+				:loading="testingWebhook"
+				:disabled="testingWebhook"
+				data-test-id="webhook-test-button"
+				@click="testTaskmaster"
+			>
+				{{ testingWebhook ? 'Testing...' : 'Test Webhook' }}
+			</N8nButton>
+		</div>
 	</div>
 </template>
 
 <style lang="scss" module>
+// Main page background with orchestrator gradient - spread over whole viewport
+:global(body) {
+	background: linear-gradient(135deg, #0a0a0f 0%, #1a1a2e 50%, #0f0f1e 100%);
+	min-height: 100vh;
+	position: relative;
+
+	&::before {
+		content: '';
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: radial-gradient(
+			ellipse 100% 100% at 50% 50%,
+			rgba(139, 92, 246, 0.15) 0%,
+			rgba(99, 102, 241, 0.1) 25%,
+			rgba(59, 130, 246, 0.08) 50%,
+			transparent 100%
+		);
+		pointer-events: none;
+		z-index: 0;
+	}
+
+	&::after {
+		content: '';
+		position: fixed;
+		bottom: 0;
+		left: 0;
+		right: 0;
+		width: 100vw;
+		height: 100vh;
+		background: radial-gradient(
+			ellipse 120% 80% at center bottom,
+			rgba(139, 92, 246, 0.25) 0%,
+			rgba(99, 102, 241, 0.18) 20%,
+			rgba(59, 130, 246, 0.12) 40%,
+			transparent 80%
+		);
+		pointer-events: none;
+		z-index: 0;
+	}
+}
+
+:global(.workflows-view-container) {
+	position: relative;
+	z-index: 1;
+	min-height: 100vh;
+	width: 100%;
+	margin: 0;
+	padding: 0;
+
+	// Ensure content is above background gradients
+	> * {
+		position: relative;
+		z-index: 1;
+		width: 100%;
+	}
+
+	// Update workflow cards
+	:global(.card) {
+		background: rgba(255, 255, 255, 0.05) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border: 1px solid rgba(255, 255, 255, 0.1) !important;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.08) !important;
+			border-color: rgba(139, 92, 246, 0.3) !important;
+			transform: translateY(-2px);
+			box-shadow: 0 6px 20px rgba(139, 92, 246, 0.2);
+		}
+	}
+
+	// Update text colors for better contrast
+	:global(.n8n-heading),
+	:global(.n8n-text) {
+		color: rgba(255, 255, 255, 0.95) !important;
+	}
+
+	// Update input fields
+	:global(.n8n-input) {
+		background: rgba(0, 0, 0, 0.4) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border: 1px solid rgba(255, 255, 255, 0.1) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+
+		&:focus-within {
+			border-color: rgba(139, 92, 246, 0.5) !important;
+			box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.2) !important;
+		}
+	}
+
+	// Update select dropdowns
+	:global(.n8n-select) {
+		background: rgba(0, 0, 0, 0.4) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border: 1px solid rgba(255, 255, 255, 0.1) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+	}
+
+	// Update pagination
+	:global(.el-pagination) {
+		:global(.el-pager li) {
+			background: rgba(255, 255, 255, 0.05) !important;
+			color: rgba(255, 255, 255, 0.8) !important;
+			border: 1px solid rgba(255, 255, 255, 0.1) !important;
+
+			&:hover {
+				background: rgba(139, 92, 246, 0.3) !important;
+				color: rgba(255, 255, 255, 1) !important;
+			}
+
+			&.is-active {
+				background: linear-gradient(
+					135deg,
+					rgba(139, 92, 246, 0.8) 0%,
+					rgba(99, 102, 241, 0.8) 100%
+				) !important;
+				color: rgba(255, 255, 255, 1) !important;
+			}
+		}
+
+		:global(.btn-prev),
+		:global(.btn-next) {
+			background: rgba(255, 255, 255, 0.05) !important;
+			color: rgba(255, 255, 255, 0.8) !important;
+			border: 1px solid rgba(255, 255, 255, 0.1) !important;
+
+			&:hover {
+				background: rgba(139, 92, 246, 0.3) !important;
+				color: rgba(255, 255, 255, 1) !important;
+			}
+		}
+	}
+
+	// Update badges
+	:global(.n8n-badge) {
+		background: rgba(139, 92, 246, 0.2) !important;
+		border: 1px solid rgba(139, 92, 246, 0.3) !important;
+		color: rgba(255, 255, 255, 0.9) !important;
+	}
+
+	// Update breadcrumbs
+	:global(.n8n-breadcrumbs) {
+		color: rgba(255, 255, 255, 0.8) !important;
+
+		:global(a) {
+			color: rgba(255, 255, 255, 0.8) !important;
+
+			&:hover {
+				color: rgba(139, 92, 246, 1) !important;
+			}
+		}
+	}
+
+	// Update ProjectHeader and InsightsSummary to be more transparent
+	:global(.project-header),
+	:global(.insights-summary) {
+		background: rgba(255, 255, 255, 0.03) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+	}
+
+	// Update KPI cards if they exist
+	:global(.kpi-card),
+	:global(.insight-card) {
+		background: rgba(255, 255, 255, 0.05) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border: 1px solid rgba(255, 255, 255, 0.1) !important;
+		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+	}
+
+	// Change orange Run buttons to white
+	:global(.runButton) {
+		background: rgba(255, 255, 255, 0.15) !important;
+		backdrop-filter: blur(10px);
+		-webkit-backdrop-filter: blur(10px);
+		border: 1px solid rgba(255, 255, 255, 0.3) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+		transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.25) !important;
+			border-color: rgba(255, 255, 255, 0.4) !important;
+			transform: translateY(-1px);
+			box-shadow: 0 4px 12px rgba(255, 255, 255, 0.15);
+		}
+
+		&:active {
+			background: rgba(255, 255, 255, 0.2) !important;
+			transform: translateY(0);
+		}
+	}
+
+	// Change any orange/red primary buttons to white
+	:global(button[type='primary']),
+	:global(.el-button--primary),
+	:global(.n8n-button[type='primary']) {
+		background: rgba(255, 255, 255, 0.15) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border-color: rgba(255, 255, 255, 0.3) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.25) !important;
+			border-color: rgba(255, 255, 255, 0.4) !important;
+		}
+	}
+}
+
 .actionsContainer {
 	display: flex;
 	justify-content: center;
+	gap: var(--spacing--md);
 }
 
 .easy-ai-workflow-callout {
@@ -2444,6 +2659,12 @@ const onNameSubmit = async (name: string) => {
 	margin-top: var(--spacing--xs);
 	padding-left: var(--spacing--sm);
 	padding-right: var(--spacing--md);
+	background: rgba(255, 255, 255, 0.05) !important;
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border: 1px solid rgba(255, 255, 255, 0.1) !important;
+	border-radius: var(--radius--large);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 
 	.callout-trailing-content {
 		display: flex;
@@ -2457,14 +2678,25 @@ const onNameSubmit = async (name: string) => {
 	text-align: center;
 	display: inline-flex;
 	height: 230px;
+	background: rgba(255, 255, 255, 0.05) !important;
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border: 1px solid rgba(255, 255, 255, 0.1) !important;
+	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
 
 	& + & {
 		margin-left: var(--spacing--sm);
 	}
 
 	&:hover {
+		background: rgba(255, 255, 255, 0.08) !important;
+		border-color: rgba(139, 92, 246, 0.4) !important;
+		transform: translateY(-4px);
+		box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
+
 		svg {
-			color: var(--color--primary);
+			color: rgba(139, 92, 246, 1);
 		}
 	}
 }
@@ -2555,7 +2787,33 @@ const onNameSubmit = async (name: string) => {
 }
 
 .fixedButton {
-	// Remove fixed positioning since container handles it
+	background: rgba(0, 0, 0, 0.5) !important;
+	backdrop-filter: blur(20px);
+	-webkit-backdrop-filter: blur(20px);
+	border: 1px solid rgba(255, 255, 255, 0.1) !important;
+	box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+	transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+	&:hover {
+		background: rgba(0, 0, 0, 0.7) !important;
+		border-color: rgba(139, 92, 246, 0.5) !important;
+		transform: translateY(-2px);
+		box-shadow: 0 6px 20px rgba(139, 92, 246, 0.3);
+	}
+
+	&:global(.type-primary) {
+		background: rgba(255, 255, 255, 0.15) !important;
+		backdrop-filter: blur(20px);
+		-webkit-backdrop-filter: blur(20px);
+		border-color: rgba(255, 255, 255, 0.3) !important;
+		color: rgba(255, 255, 255, 0.95) !important;
+
+		&:hover {
+			background: rgba(255, 255, 255, 0.25) !important;
+			border-color: rgba(255, 255, 255, 0.4) !important;
+			box-shadow: 0 6px 20px rgba(255, 255, 255, 0.15);
+		}
+	}
 }
 </style>
 
