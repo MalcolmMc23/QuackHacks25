@@ -75,6 +75,8 @@ import type { PathItem } from '@n8n/design-system/components/N8nBreadcrumbs/Brea
 import { useI18n } from '@n8n/i18n';
 import { getResourcePermissions } from '@n8n/permissions';
 import { createEventBus } from '@n8n/utils/event-bus';
+import { makeRestApiRequest } from '@n8n/rest-api-client';
+import { useRootStore } from '@n8n/stores/useRootStore';
 import debounce from 'lodash/debounce';
 import { type IUser, PROJECT_ROOT } from 'n8n-workflow';
 import { computed, onBeforeUnmount, onMounted, ref, useTemplateRef, watch } from 'vue';
@@ -148,6 +150,7 @@ const readyToRunWorkflowsV2Store = useReadyToRunWorkflowsV2Store();
 const personalizedTemplatesV2Store = usePersonalizedTemplatesV2Store();
 const personalizedTemplatesV3Store = usePersonalizedTemplatesV3Store();
 const templatesDataQualityStore = useTemplatesDataQualityStore();
+const rootStore = useRootStore();
 
 const documentTitle = useDocumentTitle();
 const { callDebounced } = useDebounce();
@@ -920,6 +923,22 @@ const addWorkflow = () => {
 		source: 'Workflows list',
 	});
 	trackEmptyCardClick('blank');
+};
+
+const testTaskmaster = async () => {
+	try {
+		const fakePrompt =
+			'Create a workflow that processes customer orders and sends email notifications';
+		const response = await makeRestApiRequest(
+			rootStore.restApiContext,
+			'POST',
+			'/workflows/taskmaster',
+			{ prompt: fakePrompt },
+		);
+		console.log('Taskmaster response:', response);
+	} catch (error) {
+		console.error('Taskmaster error:', error);
+	}
 };
 
 const openTemplatesRepository = async () => {
@@ -2362,15 +2381,26 @@ const onNameSubmit = async (name: string) => {
 			</div>
 		</template>
 	</ResourcesListLayout>
-	<N8nButton
-		:class="$style.fixedButton"
-		type="primary"
-		size="large"
-		data-test-id="fixed-bottom-right-button"
-		@click="router.push('/orchestrator')"
-	>
-		Button
-	</N8nButton>
+	<div :class="$style.fixedButtonsContainer">
+		<N8nButton
+			:class="$style.fixedButton"
+			type="primary"
+			size="large"
+			data-test-id="fixed-bottom-right-button"
+			@click="router.push('/orchestrator')"
+		>
+			Button
+		</N8nButton>
+		<N8nButton
+			:class="$style.fixedButton"
+			type="secondary"
+			size="large"
+			data-test-id="taskmaster-test-button"
+			@click="testTaskmaster"
+		>
+			Test Taskmaster
+		</N8nButton>
+	</div>
 </template>
 
 <style lang="scss" module>
@@ -2484,11 +2514,18 @@ const onNameSubmit = async (name: string) => {
 	pointer-events: none;
 }
 
-.fixedButton {
+.fixedButtonsContainer {
 	position: fixed;
 	bottom: var(--spacing--lg);
 	right: var(--spacing--lg);
 	z-index: 1000;
+	display: flex;
+	gap: var(--spacing--sm);
+	flex-direction: row-reverse;
+}
+
+.fixedButton {
+	// Remove fixed positioning since container handles it
 }
 </style>
 

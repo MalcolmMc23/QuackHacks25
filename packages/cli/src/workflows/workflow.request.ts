@@ -81,4 +81,6 @@ export declare namespace WorkflowRequest {
 	>;
 
 	type GetDescriptions = AuthenticatedRequest;
+
+	type Taskmaster = AuthenticatedRequest<{}, {}, { prompt: string }>;
 }

@@ -261,6 +261,17 @@ export class WorkflowsController {
 		return await this.workflowService.getWorkflowDescriptions(req.user);
 	}
 
+	@Post('/taskmaster')
+	async taskmaster(req: WorkflowRequest.Taskmaster) {
+		const { prompt } = req.body;
+
+		if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+			throw new BadRequestError('Prompt is required and must be a non-empty string');
+		}
+
+		return await this.workflowDescriptionAiService.taskmaster(req.user, prompt.trim());
+	}
+
 	@Get('/new')
 	async getNewName(req: WorkflowRequest.NewName) {
 		const requestedName = req.query.name ?? this.globalConfig.workflows.defaultName;
